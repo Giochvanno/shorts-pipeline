@@ -1,0 +1,38 @@
+# --- Secrets ------------------------------------------------------------------
+.env
+secrets/
+client_secret*.json
+*token*.json
+
+# --- Pipeline outputs ---------------------------------------------------------
+runs/
+*.db
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Licensed assets we may use but must not redistribute (YouTube Audio Library).
+assets/music/
+
+# --- Python -------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# --- Tool caches --------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- OS / editors -------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

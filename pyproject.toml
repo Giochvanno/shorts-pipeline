@@ -1,0 +1,52 @@
+[project]
+name = "shorts-pipeline"
+version = "0.1.0"
+description = "Stable, cheap and testable AI pipeline for YouTube Shorts."
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime dependencies are added step by step, only when a step needs them.
+dependencies = []
+
+[dependency-groups]
+# Installed by `uv sync` by default; never shipped with the package.
+dev = [
+    "mypy>=2.4",
+    "pytest>=9.2",
+    "ruff>=0.17",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pipeline"]
+
+# --- Lint & format -----------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes: unused imports, undefined names
+    "I",       # import sorting
+    "B",       # bugbear: likely bugs
+    "UP",      # modern Python syntax
+    "SIM",     # simplifications
+    "PTH",     # pathlib instead of os.path (Windows + Linux paths)
+    "RUF",     # ruff-specific checks
+]
+
+# --- Types ------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["pipeline", "tests"]
+
+# --- Tests ------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
