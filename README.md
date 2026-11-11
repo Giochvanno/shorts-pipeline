@@ -13,7 +13,12 @@ The goal is **stability you can measure**, not a demo:
 | ≤ $0.50 per video                        | —      |
 | ≤ 5 min of my time per day               | —      |
 
-Numbers will come from `python -m pipeline soak --runs 50` once it exists.
+Real-provider numbers will come from `python -m pipeline soak --runs 50` in stage 2.
+
+**Stage 1 (fakes, $0), measured by `tests/test_chaos.py`:** 20 of 20 videos finish
+unattended while 40 % of all adapter calls fail or return garbage; every good answer is
+paid for exactly once (120 images for 20 × 6 scenes out of 203 calls); a crash mid-step
+resumes in a new process without re-calling finished work.
 
 ## Design in one paragraph
 
@@ -33,7 +38,11 @@ git clone https://github.com/Giochvanno/shorts-pipeline.git
 cd shorts-pipeline
 uv sync                      # creates .venv with Python 3.12 + dev tools
 uv run pytest                # tests
-uv run python -m pipeline --version
+
+uv run python -m pipeline run --series fact-of-day               # -> runs/1/video.mp4
+uv run python -m pipeline run --series fact-of-day --chaos 0.3   # same, with failing fakes
+uv run python -m pipeline status                                 # where every video stands
+uv run python -m pipeline resume --video 1                       # continue a failed video
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
 
@@ -55,8 +64,12 @@ assets/fonts/        Montserrat ExtraBold + its OFL licence (text is drawn by FF
 config/              channel.yaml (models, budget, upload) + series/*.yaml (style bibles)
 pipeline/            core library
   config.py          typed config schema; hard rules live in code, not YAML
+  state.py           SQLite: step statuses, restart from the failed step, crash recovery
+  runner.py          step order, retries with backoff + jitter, alerts, JSON logs
+  artifacts.py       atomic writes + cache keyed by input hash (never pay twice)
+  cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
-  adapters/          llm, tts, images, stock, youtube — each real + fake
+  adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

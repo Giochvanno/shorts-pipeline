@@ -11,6 +11,10 @@ from typing import Any
 
 LOGGER_NAME = "pipeline"
 
+# A library must not print on its own: without a configured handler, records are dropped
+# (instead of Python's last-resort stderr output). The CLI attaches the JSON file handler.
+logging.getLogger(LOGGER_NAME).addHandler(logging.NullHandler())
+
 # Attributes every LogRecord has; anything else came from `extra=` and is ours.
 _STANDARD = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {"message"}
 

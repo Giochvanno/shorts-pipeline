@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 import yaml
 
-from pipeline.__main__ import main
+from pipeline.cli import main
 from pipeline.config import (
     DEFAULT_CONFIG_DIR,
     HARD_BANNED_TOPICS,
@@ -17,6 +17,7 @@ from pipeline.config import (
     list_series,
     load_channel,
     load_series,
+    load_topics,
 )
 
 SERIES = "fact-of-day"
@@ -46,6 +47,7 @@ def _edit_series(config_dir: Path, mutate: Mutator) -> None:
 def test_real_channel_config_is_valid() -> None:
     channel = load_channel()
 
+    assert channel.mode == "fake"  # stage 1: nothing may spend money by default
     assert channel.upload.privacy == "private"  # test phase: never public by accident
     assert channel.budget.max_cost_per_video_usd == pytest.approx(0.5)
 
@@ -154,3 +156,19 @@ def test_check_config_fails_on_broken_config(
 
     assert main(["check-config", "--config-dir", str(config_dir)]) == 1
     assert "speed" in capsys.readouterr().err
+
+
+def test_topics_are_twenty_unique_entries() -> None:
+    topics = load_topics(SERIES)
+
+    assert len(topics) == 20
+    assert len({t.lower() for t in topics}) == 20
+
+
+def test_duplicate_topics_are_rejected(config_dir: Path) -> None:
+    (config_dir / "topics" / f"{SERIES}.yaml").write_text(
+        "topics: [comets, Comets]", encoding="utf-8"
+    )
+
+    with pytest.raises(ConfigError, match="unique"):
+        load_topics(SERIES, config_dir)

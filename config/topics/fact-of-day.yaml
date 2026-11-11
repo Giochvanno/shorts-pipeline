@@ -1,0 +1,24 @@
+# Topics for "Fact of the Day". `run` takes the first one not used yet.
+# Stand-in for the `ideas` table until stage 2. Also the fixed set of 20 for
+# comparing script quality when the model or the prompt changes.
+topics:
+  - why octopuses have three hearts
+  - how honey can stay edible for thousands of years
+  - why the sky is blue but sunsets are red
+  - why a day on Venus is longer than its year
+  - how sharks are older than trees
+  - how trees share sugar through underground fungi
+  - why the Eiffel Tower grows taller in summer
+  - how lightning is hotter than the surface of the sun
+  - why wombats make cube-shaped droppings
+  - why the Great Wall is hard to see from orbit
+  - why we need leap years
+  - how a single cloud can weigh hundreds of tons
+  - why flamingos are pink
+  - how glass is made from sand
+  - why the Moon always shows us the same face
+  - how ants carry many times their own weight
+  - why cats usually land on their feet
+  - how a teaspoon of neutron star weighs billions of tons
+  - why bananas are slightly radioactive
+  - how the deepest point of the ocean was first reached

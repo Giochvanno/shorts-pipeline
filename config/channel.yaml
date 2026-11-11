@@ -1,6 +1,10 @@
 # Channel-wide settings. Validated by pipeline/config.py (`python -m pipeline check-config`).
 # Unknown keys are an error, so a typo never gets silently ignored.
 
+# fake = offline fakes, $0 (stage 1). real = paid providers (stage 2).
+# `python -m pipeline run --mode ...` overrides it for one run.
+mode: fake
+
 channel:
   name: "Fact of the Day (test)"
   language: en              # language of scripts, voice and captions
