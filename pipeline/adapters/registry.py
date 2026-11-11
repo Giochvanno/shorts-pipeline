@@ -6,6 +6,8 @@ is a config change, not a code change in the steps.
 
 from dataclasses import dataclass
 
+from pipeline.adapters.images import ImageClient
+from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.tts import TtsClient
@@ -18,6 +20,7 @@ class Adapters:
     llm_heavy: LlmClient  # script, critic, frame check
     llm_light: LlmClient  # titles, tags, stock queries
     tts: TtsClient
+    images: ImageClient  # FLUX for scenes
 
 
 def build_adapters(models: ModelsConfig, *, fake: bool) -> Adapters:
@@ -25,4 +28,4 @@ def build_adapters(models: ModelsConfig, *, fake: bool) -> Adapters:
         # Real Claude and ElevenLabs adapters are connected after stage 1.
         raise NotImplementedError("real adapters are not connected yet; use fake=True")
     del models  # fakes do not need model IDs; real adapters will read them from here
-    return Adapters(llm_heavy=FakeLlm(), llm_light=FakeLlm(), tts=FakeTts())
+    return Adapters(llm_heavy=FakeLlm(), llm_light=FakeLlm(), tts=FakeTts(), images=FakeImages())
