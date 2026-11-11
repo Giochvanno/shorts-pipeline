@@ -34,6 +34,7 @@ cd shorts-pipeline
 uv sync                      # creates .venv with Python 3.12 + dev tools
 uv run pytest                # tests
 uv run python -m pipeline --version
+uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
 
 ## Checks (same as CI)
@@ -48,11 +49,13 @@ uv run pytest                # tests
 ## Layout
 
 ```
+config/              channel.yaml (models, budget, upload) + series/*.yaml (style bibles)
 pipeline/            core library
+  config.py          typed config schema; hard rules live in code, not YAML
   steps/             idea, script, voice, visuals, captions, render, qa, publish
   adapters/          llm, tts, images, stock, youtube — each real + fake
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```
 
-`config/`, `bot/`, `assets/` and the `Dockerfile` appear in the steps that need them.
+`bot/`, `assets/`, `config/music.yaml` and the `Dockerfile` appear in the steps that need them.
