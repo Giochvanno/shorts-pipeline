@@ -10,6 +10,8 @@ from collections.abc import Callable
 
 import pytest
 
+from pipeline.adapters.images import ImageClient, ImageRequest
+from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient, LlmRequest
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.tts import TtsClient, TtsRequest
@@ -70,3 +72,29 @@ def test_tts_rejects_empty_text(tts: TtsClient) -> None:
 
     with pytest.raises(ValueError, match="empty"):
         tts.synthesize(empty)
+
+
+# --- images ---------------------------------------------------------------------
+
+IMAGE_IMPLEMENTATIONS: list[Callable[[], ImageClient]] = [FakeImages]
+
+IMAGE_REQUEST = ImageRequest(prompt="a lighthouse at dusk", seed=7, width=64, height=112)
+
+_SIGNATURES = {"png": b"\x89PNG", "jpg": b"\xff\xd8\xff", "webp": b"RIFF"}
+
+
+@pytest.fixture(params=IMAGE_IMPLEMENTATIONS, ids=lambda f: f.__name__)
+def images(request: pytest.FixtureRequest) -> ImageClient:
+    factory: Callable[[], ImageClient] = request.param
+    return factory()
+
+
+def test_images_return_a_real_image_with_seed_and_licence(images: ImageClient) -> None:
+    result = images.generate(IMAGE_REQUEST)
+
+    assert result.image.startswith(_SIGNATURES[result.format])
+    assert result.seed == IMAGE_REQUEST.seed
+    assert result.width > 0
+    assert result.height > 0
+    assert result.licence.strip()
+    assert result.cost_usd >= 0

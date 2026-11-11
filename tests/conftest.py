@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.config import SeriesConfig, load_series
@@ -26,7 +27,18 @@ def fake_tts() -> FakeTts:
 
 
 @pytest.fixture
-def ctx(tmp_path: Path, series: SeriesConfig, fake_llm: FakeLlm, fake_tts: FakeTts) -> StepContext:
+def fake_images() -> FakeImages:
+    return FakeImages()
+
+
+@pytest.fixture
+def ctx(
+    tmp_path: Path,
+    series: SeriesConfig,
+    fake_llm: FakeLlm,
+    fake_tts: FakeTts,
+    fake_images: FakeImages,
+) -> StepContext:
     return StepContext(
         video_id=1,
         topic="why octopuses have three hearts",
@@ -35,4 +47,5 @@ def ctx(tmp_path: Path, series: SeriesConfig, fake_llm: FakeLlm, fake_tts: FakeT
         llm_heavy=fake_llm,
         llm_light=fake_llm,
         tts=fake_tts,
+        images=fake_images,
     )

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from pipeline.adapters.images import ImageClient
 from pipeline.adapters.llm import LlmClient
 from pipeline.adapters.tts import TtsClient
 from pipeline.config import SeriesConfig
@@ -25,6 +26,7 @@ class StepContext:
     llm_heavy: LlmClient
     llm_light: LlmClient
     tts: TtsClient
+    images: ImageClient
     # Bumped by "redo script" / "redo visuals": a new revision means a new cache key.
     revision: int = 0
 
