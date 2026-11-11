@@ -33,9 +33,30 @@ def write_atomic(path: Path, data: bytes) -> None:
 
 def write_output(path: Path, data: bytes, key: str, info: Mapping[str, Any]) -> None:
     """Write the output first, the meta last: meta present means the output is complete."""
+    invalidate(path)
     write_atomic(path, data)
+    write_meta(path, key, info)
+
+
+def file_hash(path: Path) -> str:
+    """SHA-256 of a file's bytes, read in chunks (videos can be large)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def invalidate(output: Path) -> None:
+    """Drop the meta before overwriting an output, so a crash mid-write can never pair
+    the old meta (old inputs) with new bytes."""
+    meta_path(output).unlink(missing_ok=True)
+
+
+def write_meta(output: Path, key: str, info: Mapping[str, Any]) -> None:
+    """Mark an already written output (e.g. by FFmpeg) as complete for these inputs."""
     meta = {"input_hash": key, **info}
-    write_atomic(meta_path(path), json.dumps(meta, indent=2, ensure_ascii=False).encode("utf-8"))
+    write_atomic(meta_path(output), json.dumps(meta, indent=2, ensure_ascii=False).encode("utf-8"))
 
 
 def read_meta(output: Path) -> dict[str, Any] | None:

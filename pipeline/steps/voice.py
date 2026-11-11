@@ -54,10 +54,14 @@ def run(ctx: StepContext) -> StepResult:
     return StepResult(outputs=(output,), cost_usd=result.cost_usd, cached=False)
 
 
-def duration_s(run_dir: Path) -> float:
-    """Measured voice duration, written by `run` (used by captions and render)."""
+def voice_file(run_dir: Path) -> tuple[Path, float]:
+    """The voice file written by `run` and its measured duration (used by captions and render)."""
     for existing in sorted(run_dir.glob("voice.*")):
         meta = read_meta(existing)
         if meta is not None and existing.suffix in {".mp3", ".wav"}:
-            return float(meta["duration_s"])
+            return existing, float(meta["duration_s"])
     raise StepError("no voice file: run the voice step first", retryable=False)
+
+
+def duration_s(run_dir: Path) -> float:
+    return voice_file(run_dir)[1]

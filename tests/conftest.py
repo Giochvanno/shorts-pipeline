@@ -1,5 +1,7 @@
 """Shared fixtures: a step context wired to fakes and the real series config."""
 
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -49,3 +51,13 @@ def ctx(
         tts=fake_tts,
         images=fake_images,
     )
+
+
+@pytest.fixture
+def ffmpeg() -> None:
+    """Skip locally if FFmpeg is missing; in CI (REQUIRE_FFMPEG=1) fail instead of skipping."""
+    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
+        return
+    if os.environ.get("REQUIRE_FFMPEG") == "1":
+        pytest.fail("FFmpeg is required here but not found in PATH")
+    pytest.skip("FFmpeg not installed")
