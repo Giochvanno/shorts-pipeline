@@ -105,6 +105,7 @@ class ModelsConfig(_Strict):
 
 
 class ChannelConfig(_Strict):
+    mode: Literal["fake", "real"]
     channel: ChannelInfo
     upload: UploadConfig
     budget: BudgetConfig
@@ -214,6 +215,23 @@ class SeriesConfig(_Strict):
         return self
 
 
+class TopicsFile(_Strict):
+    """config/topics/<series>.yaml: stand-in for the `ideas` table until stage 2,
+    and the fixed set for comparing script quality across models and prompts."""
+
+    topics: list[str] = Field(min_length=1)
+
+    @field_validator("topics")
+    @classmethod
+    def _unique_topics(cls, v: list[str]) -> list[str]:
+        cleaned = [t.strip() for t in v]
+        if any(not t for t in cleaned):
+            raise ValueError("topics must not be empty")
+        if len({t.lower() for t in cleaned}) != len(cleaned):
+            raise ValueError("topics must be unique")
+        return cleaned
+
+
 # --- loading --------------------------------------------------------------------
 
 
@@ -254,3 +272,7 @@ def load_series(series_id: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> Series
     if series.id != series_id:
         raise ConfigError(f"{path}: id is {series.id!r}, but the file name says {series_id!r}")
     return series
+
+
+def load_topics(series_id: str, config_dir: Path = DEFAULT_CONFIG_DIR) -> list[str]:
+    return _validate(TopicsFile, config_dir / "topics" / f"{series_id}.yaml").topics

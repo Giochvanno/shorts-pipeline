@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from pipeline.__main__ import main
+from pipeline.cli import main
 
 
 def test_version_flag_prints_version(capsys: pytest.CaptureFixture[str]) -> None:

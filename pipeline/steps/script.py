@@ -92,8 +92,16 @@ def parse_script(text: str) -> Script:
         raise StepError("LLM answer contains no JSON object", retryable=True)
     try:
         return Script.model_validate(json.loads(match.group(0)))
-    except (json.JSONDecodeError, ValidationError) as e:
-        raise StepError(f"LLM answer is not a valid script: {e}", retryable=True) from e
+    except json.JSONDecodeError as e:
+        raise StepError(
+            f"LLM answer is not a valid script: bad JSON ({e.msg})", retryable=True
+        ) from e
+    except ValidationError as e:
+        problems = "; ".join(
+            f"{'.'.join(str(p) for p in err['loc']) or 'root'}: {err['msg']}"
+            for err in e.errors(include_url=False)
+        )
+        raise StepError(f"LLM answer is not a valid script: {problems}", retryable=True) from e
 
 
 def check_script(script: Script, series: SeriesConfig, structure: str) -> list[str]:

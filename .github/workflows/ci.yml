@@ -42,9 +42,24 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install FFmpeg (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        timeout-minutes: 12
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        # apt mirrors occasionally stall: every call has its own timeout and up to 3 tries.
+        run: |
+          sudo rm -f /var/lib/man-db/auto-update  # man-db reindexing can stall for minutes
+          for attempt in 1 2 3; do
+            if timeout 120 sudo apt-get update -qq \
+              && timeout 180 sudo apt-get install -y -qq --no-install-recommends ffmpeg; then
+              break
+            fi
+            echo "::warning::apt attempt $attempt failed or timed out, retrying"
+            sleep 10
+          done
+          command -v ffmpeg
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 10
         run: choco install ffmpeg -y --no-progress
       - run: ffmpeg -version
       - uses: astral-sh/setup-uv@v7

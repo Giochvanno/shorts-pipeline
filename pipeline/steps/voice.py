@@ -38,6 +38,9 @@ def run(ctx: StepContext) -> StepResult:
             return StepResult(outputs=(existing,), cost_usd=0.0, cached=True)
 
     result = ctx.tts.synthesize(request)
+    if not result.audio or result.duration_s <= 0:
+        # Seen in the wild as empty bodies on a 200 OK: retry, never save it.
+        raise StepError("TTS returned empty audio", retryable=True)
     output = ctx.run_dir / f"voice.{result.format}"
     write_output(
         output,

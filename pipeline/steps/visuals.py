@@ -13,16 +13,30 @@ upstream (the script prompt keeps scene descriptions clean) and downstream
 import hashlib
 from pathlib import Path
 
-from pipeline.adapters.images import ImageRequest
+from pipeline.adapters.errors import TransientAdapterError
+from pipeline.adapters.images import ImageRequest, ImageResult
 from pipeline.artifacts import input_hash, is_cached, write_output
 from pipeline.config import VisualBible
+from pipeline.logs import get_logger
 from pipeline.steps import script as script_step
 from pipeline.steps.base import StepContext, StepError, StepResult
+
+log = get_logger()
 
 FRAMES_DIR = "frames"
 # Generation size, close to 9:16. Render scales and crops to 1080x1920.
 WIDTH, HEIGHT = 768, 1344
 _IMAGE_SUFFIXES = {".png", ".jpg", ".webp"}
+_SIGNATURES = {"png": (b"\x89PNG\r\n\x1a\n",), "jpg": (b"\xff\xd8\xff",), "webp": (b"RIFF",)}
+_MIN_BYTES = 1024  # anything smaller is not a usable 768x1344 frame
+
+
+def looks_like_image(data: bytes, fmt: str) -> bool:
+    """Cheap first gate: right magic bytes and a plausible size.
+
+    Decoding, brightness and the Claude review are the frame checks of visuals v1.
+    """
+    return len(data) >= _MIN_BYTES and data.startswith(_SIGNATURES.get(fmt, (b"\x00\xff",)))
 
 
 def build_image_prompt(bible: VisualBible, scene_visual: str) -> str:
@@ -44,6 +58,34 @@ def video_seed(video_id: int, revision: int) -> int:
 
 def _frame_candidates(frames_dir: Path, index: int) -> list[Path]:
     return sorted(p for p in frames_dir.glob(f"scene_{index:02d}.*") if p.suffix in _IMAGE_SUFFIXES)
+
+
+def _generate_scene(ctx: StepContext, index: int, prompt: str, seed: int) -> ImageResult:
+    """Up to `max_attempts_per_scene` tries for one scene; every rejection is logged with a reason.
+
+    Retrying per scene (not the whole step) keeps one bad image from failing five good ones.
+    In v1 the last resort after these attempts is a stock image instead of an error.
+    """
+    tries = ctx.series.visual_bible.max_attempts_per_scene
+    reason = ""
+    for attempt in range(1, tries + 1):
+        try:
+            result = ctx.images.generate(
+                ImageRequest(prompt=prompt, seed=seed, width=WIDTH, height=HEIGHT)
+            )
+        except TransientAdapterError as e:
+            reason = str(e)
+        else:
+            if looks_like_image(result.image, result.format):
+                return result
+            reason = "invalid image data"
+        log.warning(
+            "frame_rejected",
+            extra={"video_id": ctx.video_id, "scene": index, "attempt": attempt, "reason": reason},
+        )
+    raise StepError(
+        f"scene {index}: no usable image after {tries} attempts (last: {reason})", retryable=True
+    )
 
 
 def run(ctx: StepContext) -> StepResult:
@@ -71,9 +113,7 @@ def run(ctx: StepContext) -> StepResult:
             outputs.append(cached)
             continue
 
-        result = ctx.images.generate(
-            ImageRequest(prompt=prompt, seed=seed, width=WIDTH, height=HEIGHT)
-        )
+        result = _generate_scene(ctx, index, prompt, seed)
         called = True
         cost += result.cost_usd
         path = frames_dir / f"scene_{index:02d}.{result.format}"

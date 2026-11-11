@@ -4,8 +4,10 @@ Steps receive an `Adapters` object and talk to ports, so swapping a provider
 is a config change, not a code change in the steps.
 """
 
+import time
 from dataclasses import dataclass
 
+from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosLlm, ChaosTts, Sleep
 from pipeline.adapters.images import ImageClient
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient
@@ -23,9 +25,22 @@ class Adapters:
     images: ImageClient  # FLUX for scenes
 
 
-def build_adapters(models: ModelsConfig, *, fake: bool) -> Adapters:
+def build_adapters(
+    models: ModelsConfig,
+    *,
+    fake: bool,
+    chaos: ChaosConfig | None = None,
+    sleep: Sleep = time.sleep,
+) -> Adapters:
     if not fake:
-        # Real Claude and ElevenLabs adapters are connected after stage 1.
-        raise NotImplementedError("real adapters are not connected yet; use fake=True")
+        # Real Claude, ElevenLabs and FLUX adapters are connected in stage 2.
+        raise NotImplementedError("real adapters are not connected yet; use fake mode")
     del models  # fakes do not need model IDs; real adapters will read them from here
-    return Adapters(llm_heavy=FakeLlm(), llm_light=FakeLlm(), tts=FakeTts(), images=FakeImages())
+    llm: LlmClient = FakeLlm()
+    tts: TtsClient = FakeTts()
+    images: ImageClient = FakeImages()
+    if chaos is not None:
+        llm = ChaosLlm(llm, chaos, sleep)
+        tts = ChaosTts(tts, chaos, sleep)
+        images = ChaosImages(images, chaos, sleep)
+    return Adapters(llm_heavy=llm, llm_light=llm, tts=tts, images=images)
