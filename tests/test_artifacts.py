@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from pipeline.artifacts import input_hash, is_cached, meta_path, write_output
 
 
@@ -31,3 +33,19 @@ def test_no_temp_files_left_behind(tmp_path: Path) -> None:
     write_output(tmp_path / "a.json", b"{}", "k", {})
 
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_overwrite_drops_old_meta_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = tmp_path / "script.json"
+    write_output(out, b"old", "old-key", {})
+
+    def crash(*_args: object) -> None:
+        raise RuntimeError("power cut while writing meta")
+
+    monkeypatch.setattr("pipeline.artifacts.write_meta", crash)
+    with pytest.raises(RuntimeError):
+        write_output(out, b"new", "new-key", {})
+
+    assert out.read_bytes() == b"new"
+    assert not is_cached(out, "old-key")  # old meta must not vouch for new bytes
+    assert not is_cached(out, "new-key")

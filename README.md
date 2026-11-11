@@ -37,6 +37,8 @@ uv run python -m pipeline --version
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
 
+FFmpeg must be in PATH for the render step and its tests (`ffmpeg -version`).
+
 ## Checks (same as CI)
 
 ```powershell
@@ -49,6 +51,7 @@ uv run pytest                # tests
 ## Layout
 
 ```
+assets/fonts/        Montserrat ExtraBold + its OFL licence (text is drawn by FFmpeg)
 config/              channel.yaml (models, budget, upload) + series/*.yaml (style bibles)
 pipeline/            core library
   config.py          typed config schema; hard rules live in code, not YAML
@@ -58,4 +61,4 @@ tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```
 
-`bot/`, `assets/`, `config/music.yaml` and the `Dockerfile` appear in the steps that need them.
+`bot/`, `config/music.yaml` and the `Dockerfile` appear in the steps that need them.
