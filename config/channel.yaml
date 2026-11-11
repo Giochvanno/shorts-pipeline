@@ -1,0 +1,33 @@
+# Channel-wide settings. Validated by pipeline/config.py (`python -m pipeline check-config`).
+# Unknown keys are an error, so a typo never gets silently ignored.
+
+channel:
+  name: "Fact of the Day (test)"
+  language: en              # language of scripts, voice and captions
+  timezone: Asia/Seoul      # used for nightly runs and publish times
+
+upload:
+  privacy: private          # test phase: private only (private | unlisted | public)
+  category_id: "27"         # 27 = Education
+  made_for_kids: false
+  synthetic_media: true     # YouTube "altered or synthetic content" disclosure
+
+budget:
+  max_cost_per_video_usd: 0.50   # above this, runner alerts in Telegram
+
+# Model IDs live here and only here (enforced by tests/test_architecture.py).
+# Real adapters re-check IDs and prices when they are connected.
+models:
+  llm:
+    heavy:                  # script, critic, frame check, weekly review
+      primary:  { provider: claude_cli,    model: claude-opus-5-5 }
+      fallback: { provider: anthropic_api, model: claude-opus-5-5 }
+    light:                  # titles, tags, stock search queries
+      primary:  { provider: claude_cli,    model: claude-haiku-5-5 }
+      fallback: { provider: anthropic_api, model: claude-haiku-5-5 }
+  tts:
+    primary:  { provider: elevenlabs, model: eleven_multilingual_v2 }
+    fallback: null          # TODO: choose a fallback TTS provider (open question)
+  images:
+    primary:  { provider: fal,       model: fal-ai/flux/dev }
+    fallback: { provider: replicate, model: black-forest-labs/flux-dev }

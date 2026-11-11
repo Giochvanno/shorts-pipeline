@@ -5,7 +5,10 @@ description = "Stable, cheap and testable AI pipeline for YouTube Shorts."
 readme = "README.md"
 requires-python = ">=3.12"
 # Runtime dependencies are added step by step, only when a step needs them.
-dependencies = []
+dependencies = [
+    "pydantic>=2.14",
+    "pyyaml>=6.0",
+]
 
 [dependency-groups]
 # Installed by `uv sync` by default; never shipped with the package.
@@ -13,6 +16,7 @@ dev = [
     "mypy>=2.4",
     "pytest>=9.2",
     "ruff>=0.17",
+    "types-pyyaml>=6.0",
 ]
 
 [build-system]
@@ -44,6 +48,7 @@ select = [
 python_version = "3.12"
 strict = true
 files = ["pipeline", "tests"]
+plugins = ["pydantic.mypy"]
 
 # --- Tests ------------------------------------------------------------------
 [tool.pytest.ini_options]
