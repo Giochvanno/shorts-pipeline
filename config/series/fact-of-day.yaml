@@ -18,10 +18,10 @@ format:
 
 script:
   tone: >-                  # [YOURS]
-    Curious friend at a cafe, not a lecturer. Short sentences, concrete numbers,
-    one surprising detail per fact. Light humor, never clickbait lies.
+    Calm, slightly mysterious narrator. Short punchy sentences, one number per
+    sentence max. Dry humor at the end, no exclamation marks.
   angle: >-                 # [YOURS] what makes this series yours
-    Every fact ends with "so what": why it matters or how to see it yourself.
+    Every fact connects to something the viewer can see or touch today.
   rules:
     - Every claim must be checkable; prefer facts with a named source.
     - No "did you know" openings.
@@ -35,9 +35,9 @@ voice:
 
 visual_bible:
   style_prefix: >-          # [YOURS] prepended to every FLUX prompt
-    Clean editorial illustration, soft grain, flat shapes with subtle depth,
-    museum-poster feel
-  palette: ["#1B1F3B", "#F4D35E", "#EE964B", "#F2F2F2"]   # [YOURS]
+    Vintage science textbook illustration, muted paper texture,
+    fine ink linework, soft watercolor fills
+  palette: ["#2E4057", "#E8D8B0", "#C1666B", "#F5F1E6"]   # [YOURS]
   lighting: soft diffused daylight, gentle shadows
   camera: medium or wide shot, eye level, centered subject
   extra_forbidden: [watermark, logo]   # added on top of the hard rules in code
