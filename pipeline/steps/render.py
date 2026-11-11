@@ -156,8 +156,8 @@ def render_video(
         for n, line in enumerate(hook_lines):
             (scratch / f"hook_{n}.txt").write_text(line, encoding="utf-8")
         try:
-            # Generous for a 60 s Short (renders in ~10 s), but never a 10-minute hang.
-            run_ffmpeg(args, cwd=scratch, timeout_s=max(120.0, 10 * duration_s))
+            # A 31 s Short renders in ~8 s; 3x its length is a generous backstop.
+            run_ffmpeg(args, cwd=scratch, timeout_s=max(60.0, 3 * duration_s))
         except MediaError:
             tmp.unlink(missing_ok=True)
             raise

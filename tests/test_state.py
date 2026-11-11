@@ -201,3 +201,21 @@ def test_migrations_apply_once(db_path: Path) -> None:
     with StateStore(db_path) as reopened:  # must not re-run CREATE TABLE or lose data
         assert reopened.schema_version == len(MIGRATIONS)
         assert len(reopened.steps(video_id)) == len(STEPS)
+
+
+# --- videos -----------------------------------------------------------------------
+
+
+def test_videos_are_listed_and_topics_tracked(store: StateStore) -> None:
+    first = store.create_video("fact-of-day", "Octopus hearts", STEPS)
+    store.create_video("other-series", "Comets", STEPS)
+
+    assert store.video(first).topic == "Octopus hearts"
+    assert [v.id for v in store.videos("fact-of-day")] == [first]
+    assert len(store.videos()) == 2
+    assert store.used_topics("fact-of-day") == {"Octopus hearts"}
+
+
+def test_unknown_video_record(store: StateStore) -> None:
+    with pytest.raises(UnknownVideoError):
+        store.video(999)

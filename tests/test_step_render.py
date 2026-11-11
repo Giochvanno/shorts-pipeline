@@ -1,9 +1,9 @@
 """Reference tests for render v0 with real FFmpeg: format, timing, text, audio, failures."""
 
 import re
+import shutil
 import subprocess
 import time
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,7 @@ from pipeline.artifacts import read_meta
 from pipeline.media import MediaError, probe
 from pipeline.steps import render, script, visuals, voice
 from pipeline.steps.base import StepContext, StepError
+from pipeline.testing import fake_context
 
 pytestmark = pytest.mark.usefixtures("ffmpeg")
 
@@ -163,59 +164,65 @@ def test_broken_input_fails_fast_and_leaves_nothing(
 
 
 # --- the step, end to end on fakes ------------------------------------------------
+# One full fake video is rendered once per test session; each test gets its own copy.
+
+
+@pytest.fixture(scope="session")
+def rendered_template(ffmpeg: None, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    ctx = fake_context(tmp_path_factory.mktemp("template") / "run")
+    for step in (script, voice, visuals, render):
+        step.run(ctx)
+    return ctx.run_dir
 
 
 @pytest.fixture
-def prepared(ctx: StepContext) -> StepContext:
-    script.run(ctx)
-    voice.run(ctx)
-    visuals.run(ctx)
-    return ctx
+def rendered(rendered_template: Path, tmp_path: Path) -> StepContext:
+    run_dir = Path(shutil.copytree(rendered_template, tmp_path / "run"))
+    return fake_context(run_dir)
 
 
-def test_step_renders_full_fake_video(prepared: StepContext) -> None:
-    result = render.run(prepared)
-
-    (video,) = result.outputs
+def test_step_renders_full_fake_video(rendered: StepContext) -> None:
+    video = rendered.run_dir / render.OUTPUT
     info = probe(video)
+
     assert (info.width, info.height) == (1080, 1920)
-    assert info.duration_s == pytest.approx(voice.duration_s(prepared.run_dir), abs=0.07)
+    assert info.duration_s == pytest.approx(voice.duration_s(rendered.run_dir), abs=0.07)
     meta = read_meta(video)
     assert meta is not None
-    assert meta["scenes"] == len(script.load(prepared.run_dir).scenes)
+    assert meta["scenes"] == len(script.load(rendered.run_dir).scenes)
 
 
-def test_step_second_run_is_cached(prepared: StepContext) -> None:
-    render.run(prepared)
-    first = (prepared.run_dir / render.OUTPUT).stat().st_mtime_ns
+def test_step_second_run_is_cached(rendered: StepContext) -> None:
+    video = rendered.run_dir / render.OUTPUT
+    before = video.stat().st_mtime_ns
 
-    again = render.run(prepared)
+    again = render.run(rendered)
 
     assert again.cached
-    assert (prepared.run_dir / render.OUTPUT).stat().st_mtime_ns == first  # not re-encoded
+    assert video.stat().st_mtime_ns == before  # not re-encoded
 
 
-def test_step_rerenders_when_a_frame_changes(prepared: StepContext) -> None:
-    render.run(prepared)
-    _solid(visuals.frame_paths(prepared.run_dir, 1)[0], RED)
+def test_step_rerenders_when_a_frame_changes(rendered: StepContext) -> None:
+    _solid(visuals.frame_paths(rendered.run_dir, 1)[0], RED)
 
-    assert not render.run(prepared).cached
+    assert not render.run(rendered).cached
 
 
-def test_step_reports_ffmpeg_failure_as_non_retryable(prepared: StepContext) -> None:
-    visuals.frame_paths(prepared.run_dir, 1)[0].write_bytes(b"broken")
+def test_step_reports_broken_frame_as_non_retryable(rendered: StepContext) -> None:
+    visuals.frame_paths(rendered.run_dir, 1)[0].write_bytes(b"broken")
 
     with pytest.raises(StepError, match=r"scene_00\.png is not a readable image") as exc:
-        render.run(prepared)
+        render.run(rendered)
 
     assert not exc.value.retryable
-    assert read_meta(prepared.run_dir / render.OUTPUT) is None
+    assert read_meta(rendered.run_dir / render.OUTPUT) is None
 
 
 def test_step_reports_missing_ffmpeg(
-    prepared: StepContext, monkeypatch: pytest.MonkeyPatch
+    rendered: StepContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _solid(visuals.frame_paths(rendered.run_dir, 1)[0], RED)  # force a real render attempt
     monkeypatch.setattr("pipeline.media.shutil.which", lambda _name: None)
 
     with pytest.raises(StepError, match="not found in PATH"):
-        render.run(replace(prepared))
+        render.run(rendered)

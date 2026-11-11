@@ -11,6 +11,7 @@ from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.config import SeriesConfig, load_series
 from pipeline.steps.base import StepContext
+from pipeline.testing import DEMO_TOPIC
 
 
 @pytest.fixture
@@ -43,7 +44,7 @@ def ctx(
 ) -> StepContext:
     return StepContext(
         video_id=1,
-        topic="why octopuses have three hearts",
+        topic=DEMO_TOPIC,
         series=series,
         run_dir=tmp_path / "runs" / "1",
         llm_heavy=fake_llm,
@@ -53,7 +54,7 @@ def ctx(
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def ffmpeg() -> None:
     """Skip locally if FFmpeg is missing; in CI (REQUIRE_FFMPEG=1) fail instead of skipping."""
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):

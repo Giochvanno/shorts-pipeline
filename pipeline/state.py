@@ -51,6 +51,14 @@ class InvalidTransitionError(StateError):
 
 
 @dataclass(frozen=True, slots=True)
+class VideoRecord:
+    id: int
+    series_id: str
+    topic: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class StepRecord:
     video_id: int
     name: str
@@ -156,6 +164,25 @@ class StateStore:
                 [(video_id, name, i) for i, name in enumerate(steps)],
             )
         return video_id
+
+    def video(self, video_id: int) -> VideoRecord:
+        row = self._conn.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+        if row is None:
+            raise UnknownVideoError(f"no video with id {video_id}")
+        return VideoRecord(row["id"], row["series_id"], row["topic"], row["created_at"])
+
+    def videos(self, series_id: str | None = None) -> list[VideoRecord]:
+        sql = "SELECT * FROM videos"
+        params: tuple[str, ...] = ()
+        if series_id is not None:
+            sql += " WHERE series_id = ?"
+            params = (series_id,)
+        rows = self._conn.execute(sql + " ORDER BY id", params).fetchall()
+        return [VideoRecord(r["id"], r["series_id"], r["topic"], r["created_at"]) for r in rows]
+
+    def used_topics(self, series_id: str) -> set[str]:
+        """Topics already taken by this series, so a new video never repeats one."""
+        return {v.topic for v in self.videos(series_id)}
 
     def steps(self, video_id: int) -> list[StepRecord]:
         rows = self._conn.execute(
