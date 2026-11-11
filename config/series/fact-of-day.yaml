@@ -35,8 +35,8 @@ voice:
 
 visual_bible:
   style_prefix: >-          # [YOURS] prepended to every FLUX prompt
-    Vintage science textbook illustration, muted paper texture,
-    fine ink linework, soft watercolor fills
+    Vintage naturalist illustration, muted paper texture,
+    fine ink linework, soft watercolor fills, unlabeled
   palette: ["#2E4057", "#E8D8B0", "#C1666B", "#F5F1E6"]   # [YOURS]
   lighting: soft diffused daylight, gentle shadows
   camera: medium or wide shot, eye level, centered subject
@@ -46,7 +46,7 @@ visual_bible:
 captions:
   font: Montserrat ExtraBold
   words_per_chunk: 3
-  highlight_color: "#F4D35E"
+  highlight_color: "#C1666B"  # from the palette
   bottom_margin_ratio: 0.22  # share of frame height kept free at the bottom
 
 music:

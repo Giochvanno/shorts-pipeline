@@ -206,6 +206,13 @@ class SeriesConfig(_Strict):
             raise ValueError("id must be kebab-case, e.g. fact-of-day")
         return v
 
+    @model_validator(mode="after")
+    def _captions_match_palette(self) -> Self:
+        palette = {c.upper() for c in self.visual_bible.palette}
+        if self.captions.highlight_color.upper() not in palette:
+            raise ValueError("captions.highlight_color must be one of visual_bible.palette")
+        return self
+
 
 # --- loading --------------------------------------------------------------------
 

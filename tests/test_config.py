@@ -96,6 +96,9 @@ def _set(section: str, key: str, value: Any) -> Mutator:
             _set("visual_bible", "max_attempts_per_scene", 5), "max_attempts", id="too-many-tries"
         ),
         pytest.param(_set("voice", "stability", 1.5), "stability", id="unit-out-of-range"),
+        pytest.param(
+            _set("captions", "highlight_color", "#123456"), "palette", id="caption-off-palette"
+        ),
     ],
 )
 def test_broken_series_is_rejected(config_dir: Path, mutate: Mutator, message: str) -> None:
