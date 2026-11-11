@@ -66,6 +66,32 @@ def test_core_does_not_import_outer_layers(path: Path) -> None:
     assert not leaked, f"core module imports outer layer(s): {sorted(leaked)}"
 
 
+def _imported_modules(tree: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module)
+    return names
+
+
+_STEP_FILES = sorted((PACKAGE_DIR / "steps").glob("*.py"))
+
+
+@pytest.mark.parametrize("path", _STEP_FILES, ids=lambda p: p.name)
+def test_steps_talk_to_ports_not_concrete_adapters(path: Path) -> None:
+    # Steps may import `pipeline.adapters.llm`, never `...llm.fake` or the registry.
+    concrete = {
+        m
+        for m in _imported_modules(_parse(path))
+        if m.startswith("pipeline.adapters.")
+        and (m.endswith(".fake") or m == "pipeline.adapters.registry" or m.count(".") > 2)
+    }
+
+    assert not concrete, f"step imports concrete adapters: {sorted(concrete)}"
+
+
 @pytest.mark.parametrize("path", _core_files(), ids=lambda p: p.relative_to(PACKAGE_DIR).as_posix())
 def test_no_hardcoded_model_ids(path: Path) -> None:
     hits = [s for s in _string_constants(_parse(path)) if MODEL_ID_PATTERN.search(s)]
