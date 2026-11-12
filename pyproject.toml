@@ -53,5 +53,6 @@ plugins = ["pydantic.mypy"]
 # --- Tests ------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["-ra", "--strict-markers", "--strict-config"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "-m", "not live"]
+markers = ["live: calls real services (may cost money); run by hand with `-m live`"]
 xfail_strict = true

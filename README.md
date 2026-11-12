@@ -43,6 +43,8 @@ uv run python -m pipeline run --series fact-of-day               # -> runs/1/vid
 uv run python -m pipeline run --series fact-of-day --chaos 0.3   # same, with failing fakes
 uv run python -m pipeline status                                 # where every video stands
 uv run python -m pipeline resume --video 1                       # continue a failed video
+uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
+uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
 
@@ -71,6 +73,7 @@ pipeline/            core library
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
+                     llm/claude_cli.py: Claude via `claude -p` on the subscription
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

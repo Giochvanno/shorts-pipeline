@@ -1,9 +1,14 @@
 # Channel-wide settings. Validated by pipeline/config.py (`python -m pipeline check-config`).
 # Unknown keys are an error, so a typo never gets silently ignored.
 
-# fake = offline fakes, $0 (stage 1). real = paid providers (stage 2).
-# `python -m pipeline run --mode ...` overrides it for one run.
-mode: fake
+# Per port: fake = offline fake, $0; real = the provider below in `models`.
+# Real providers are switched on one at a time. For a single run:
+#   python -m pipeline run ... --real llm     (that port real)
+#   python -m pipeline run ... --mode fake    (everything fake)
+mode:
+  llm: fake
+  tts: fake
+  images: fake
 
 channel:
   name: "Fact of the Day (test)"
@@ -26,6 +31,8 @@ budget:
 # Real adapters re-check IDs and prices when they are connected.
 models:
   llm:
+    timeout_s: 180          # one call; a hung CLI process is killed and retried
+    api_fallback: false     # anthropic_api costs separate money: enable explicitly
     heavy:                  # script, critic, frame check, weekly review
       primary:  { provider: claude_cli,    model: claude-opus-5-5 }
       fallback: { provider: anthropic_api, model: claude-opus-5-5 }

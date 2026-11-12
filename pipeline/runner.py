@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pipeline.adapters.errors import TransientAdapterError
+from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.notify import Notifier
 from pipeline.adapters.registry import Adapters
 from pipeline.config import BudgetConfig, SeriesConfig, load_series
@@ -184,6 +184,8 @@ class Runner:
                     result = fn(ctx)
             except BudgetExceeded as e:
                 error, retryable = str(e), False  # waiting does not add money
+            except PermanentAdapterError as e:
+                error, retryable = f"{type(e).__name__}: {e}", False  # needs a human
             except StepError as e:
                 error, retryable = str(e), e.retryable
             except TransientAdapterError as e:
