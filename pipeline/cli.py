@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pipeline.adapters.chaos import ChaosConfig
 from pipeline.adapters.notify.console import ConsoleNotifier
-from pipeline.adapters.registry import build_adapters
+from pipeline.adapters.registry import ALL_FAKE, build_adapters
 from pipeline.config import (
     DEFAULT_CONFIG_DIR,
     ConfigError,
@@ -43,7 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_run_options(p: argparse.ArgumentParser) -> None:
         p.add_argument("--runs-dir", type=Path, default=Path("runs"))
-        p.add_argument("--mode", choices=["fake", "real"], help="override `mode` in channel.yaml")
+        p.add_argument("--mode", choices=["fake"], help="force every port to fake for this run")
+        p.add_argument(
+            "--real",
+            action="append",
+            default=[],
+            choices=["llm", "tts", "images"],
+            help="make this port real for this run (repeatable)",
+        )
         p.add_argument(
             "--chaos",
             type=float,
@@ -98,18 +105,24 @@ def pick_topic(store: StateStore, series_id: str, topics: list[str]) -> str | No
 
 def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
     channel = load_channel()
-    mode = args.mode or channel.mode
-    if mode == "real":
-        print(
-            "error  real adapters are not connected yet (stage 2): use --mode fake", file=sys.stderr
-        )
+    mode = ALL_FAKE if args.mode == "fake" else channel.mode
+    if args.real:
+        mode = mode.model_copy(update=dict.fromkeys(args.real, "real"))
+    if args.chaos > 0 and mode.real_ports:
+        print("error  --chaos works with fake ports only", file=sys.stderr)
         return None
     chaos = None
     if args.chaos > 0:
         chaos = ChaosConfig(
             fail_rate=args.chaos, garbage_rate=args.chaos / 2, max_latency_s=0.02, seed=args.seed
         )
-    banner = "mode: fake adapters, $0"
+    try:
+        adapters = build_adapters(channel.models, mode=mode, chaos=chaos)
+    except NotImplementedError as e:
+        print(f"error  {e}", file=sys.stderr)
+        return None
+    ports = ", ".join(f"{port}={getattr(mode, port)}" for port in ("llm", "tts", "images"))
+    banner = f"adapters: {ports}" + ("" if mode.real_ports else " ($0)")
     if chaos is not None:
         banner += (
             f" | chaos: {chaos.fail_rate:.0%} fail, {chaos.garbage_rate:.0%} garbage,"
@@ -118,7 +131,7 @@ def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
     print(banner)
     return Runner(
         store=store,
-        adapters=build_adapters(channel.models, fake=True, chaos=chaos),
+        adapters=adapters,
         runs_dir=args.runs_dir,
         policy=RetryPolicy(max_attempts=args.max_attempts, base_delay_s=args.retry_delay),
         notifier=ConsoleNotifier(),

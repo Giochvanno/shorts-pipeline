@@ -47,7 +47,8 @@ def _edit_series(config_dir: Path, mutate: Mutator) -> None:
 def test_real_channel_config_is_valid() -> None:
     channel = load_channel()
 
-    assert channel.mode == "fake"  # stage 1: nothing may spend money by default
+    assert channel.mode.real_ports == ()  # in the repo nothing may spend money by default
+    assert channel.models.llm.api_fallback is False  # separate money: off unless enabled
     assert channel.upload.privacy == "private"  # test phase: never public by accident
     assert channel.budget.max_cost_per_video_usd == pytest.approx(0.5)
 

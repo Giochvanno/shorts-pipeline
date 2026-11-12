@@ -43,15 +43,25 @@ def test_run_takes_the_next_unused_topic(tmp_path: Path) -> None:
         assert pick_topic(store, "fact-of-day", topics) is None
 
 
-def test_real_mode_is_refused_until_stage_2(
+def test_ports_without_a_real_adapter_are_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code = main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--mode", "real"])
+    code = main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--real", "tts"])
 
     assert code == 2
     assert "not connected yet" in capsys.readouterr().err
     with StateStore(tmp_path / DB_NAME) as store:
         assert store.videos() == []  # nothing was created
+
+
+def test_chaos_is_refused_with_real_ports(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    args = ["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path)]
+    code = main([*args, "--real", "llm", "--chaos", "0.2"])
+
+    assert code == 2
+    assert "fake ports only" in capsys.readouterr().err
 
 
 def test_resume_of_unknown_video_is_a_clear_error(

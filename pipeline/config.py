@@ -101,6 +101,8 @@ class ImageChain(_Strict):
 
 
 class LlmModels(_Strict):
+    timeout_s: float = Field(gt=0, le=900)
+    api_fallback: bool
     heavy: LlmChain
     light: LlmChain
 
@@ -111,8 +113,21 @@ class ModelsConfig(_Strict):
     images: ImageChain
 
 
+Mode = Literal["fake", "real"]
+
+
+class ModeConfig(_Strict):
+    llm: Mode
+    tts: Mode
+    images: Mode
+
+    @property
+    def real_ports(self) -> tuple[str, ...]:
+        return tuple(port for port in ("llm", "tts", "images") if getattr(self, port) == "real")
+
+
 class ChannelConfig(_Strict):
-    mode: Literal["fake", "real"]
+    mode: ModeConfig
     channel: ChannelInfo
     upload: UploadConfig
     budget: BudgetConfig

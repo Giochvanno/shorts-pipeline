@@ -5,6 +5,8 @@ Today only the fakes are listed. Real adapters join these lists when they land
 """
 
 import io
+import json
+import subprocess
 import wave
 from collections.abc import Callable
 
@@ -13,11 +15,30 @@ import pytest
 from pipeline.adapters.images import ImageClient, ImageRequest
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient, LlmRequest
+from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.tts import TtsClient, TtsRequest
 from pipeline.adapters.tts.fake import FakeTts
 
-LLM_IMPLEMENTATIONS: list[Callable[[], LlmClient]] = [FakeLlm]
+
+def ClaudeCliOnFakeProcess() -> LlmClient:
+    """The real adapter with subprocess replaced: CI has no CLI and no login."""
+    answer = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": False,
+        "result": '{"ok": true}',
+        "total_cost_usd": 0.001,
+        "usage": {"input_tokens": 20, "output_tokens": 5},
+    }
+
+    def run(args: list[str], **_kwargs: object) -> "subprocess.CompletedProcess[bytes]":
+        return subprocess.CompletedProcess(args, 0, json.dumps(answer).encode(), b"")
+
+    return ClaudeCliLlm("model-from-config", run=run, which=lambda _name: "claude")
+
+
+LLM_IMPLEMENTATIONS: list[Callable[[], LlmClient]] = [FakeLlm, ClaudeCliOnFakeProcess]
 TTS_IMPLEMENTATIONS: list[Callable[[], TtsClient]] = [FakeTts]
 
 TTS_REQUEST = TtsRequest(

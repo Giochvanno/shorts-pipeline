@@ -6,3 +6,9 @@ class TransientAdapterError(Exception):
 
     Real adapters translate their SDK's errors into this; the chaos fakes raise it.
     """
+
+
+class PermanentAdapterError(Exception):
+    """Retrying will not help until a human acts: not logged in, usage limit reached,
+    unknown model, CLI not installed. The runner stops at once and alerts with this text.
+    """
