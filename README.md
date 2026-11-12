@@ -67,6 +67,7 @@ pipeline/            core library
   state.py           SQLite: step statuses, restart from the failed step, crash recovery
   runner.py          step order, retries with backoff + jitter, alerts, JSON logs
   artifacts.py       atomic writes + cache keyed by input hash (never pay twice)
+  costs.py           cost ledger: every adapter call recorded, budget checked before paid calls
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers

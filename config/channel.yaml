@@ -17,7 +17,10 @@ upload:
   synthetic_media: true     # YouTube "altered or synthetic content" disclosure
 
 budget:
-  max_cost_per_video_usd: 0.50   # above this, runner alerts in Telegram
+  # Checked before every paid call; reaching a limit stops the video with an alert.
+  # Counts per-call spend (API tokens, images, ...), not fixed monthly subscriptions.
+  max_cost_per_video_usd: 0.50
+  max_monthly_usd: 10.00          # calendar month, UTC
 
 # Model IDs live here and only here (enforced by tests/test_architecture.py).
 # Real adapters re-check IDs and prices when they are connected.

@@ -59,6 +59,19 @@ class VideoRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CostRecord:
+    video_id: int | None
+    step: str | None
+    provider: str
+    model: str
+    billing: str  # fake | subscription | api
+    unit: str  # tokens | characters | images
+    units: float
+    cost_usd: float
+    ts: str
+
+
+@dataclass(frozen=True, slots=True)
 class StepRecord:
     video_id: int
     name: str
@@ -94,6 +107,23 @@ MIGRATIONS: tuple[str, ...] = (
         UNIQUE (video_id, position)
     );
     CREATE INDEX steps_by_status ON steps(status);
+    """,
+    # 2: one row per completed adapter call, so every cent is accounted for.
+    """
+    CREATE TABLE costs (
+        id        INTEGER PRIMARY KEY,
+        video_id  INTEGER REFERENCES videos(id) ON DELETE CASCADE,  -- NULL: not tied to a video
+        step      TEXT,
+        provider  TEXT NOT NULL,
+        model     TEXT NOT NULL,
+        billing   TEXT NOT NULL CHECK (billing IN ('fake', 'subscription', 'api')),
+        unit      TEXT NOT NULL,
+        units     REAL NOT NULL CHECK (units >= 0),
+        cost_usd  REAL NOT NULL CHECK (cost_usd >= 0),
+        ts        TEXT NOT NULL
+    );
+    CREATE INDEX costs_by_video ON costs(video_id);
+    CREATE INDEX costs_by_ts ON costs(ts);
     """,
 )
 
@@ -214,6 +244,54 @@ class StateStore:
         if statuses == {StepStatus.DONE}:
             return StepStatus.DONE
         return StepStatus.PENDING
+
+    # --- costs --------------------------------------------------------------------
+
+    def record_cost(self, cost: CostRecord) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO costs (video_id, step, provider, model, billing, unit, units,"
+                " cost_usd, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    cost.video_id,
+                    cost.step,
+                    cost.provider,
+                    cost.model,
+                    cost.billing,
+                    cost.unit,
+                    cost.units,
+                    cost.cost_usd,
+                    cost.ts,
+                ),
+            )
+
+    def costs(self, video_id: int) -> list[CostRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM costs WHERE video_id = ? ORDER BY id", (video_id,)
+        ).fetchall()
+        return [
+            CostRecord(
+                r["video_id"], r["step"], r["provider"], r["model"], r["billing"],
+                r["unit"], r["units"], r["cost_usd"], r["ts"],
+            )
+            for r in rows
+        ]  # fmt: skip
+
+    def video_cost(self, video_id: int, step: str | None = None) -> float:
+        sql = "SELECT COALESCE(SUM(cost_usd), 0) FROM costs WHERE video_id = ?"
+        params: list[int | str] = [video_id]
+        if step is not None:
+            sql += " AND step = ?"
+            params.append(step)
+        total: float = self._conn.execute(sql, params).fetchone()[0]
+        return total
+
+    def cost_since(self, ts: str) -> tuple[float, int]:
+        """Total spend and number of calls from `ts` (ISO, UTC) until now."""
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*) FROM costs WHERE ts >= ?", (ts,)
+        ).fetchone()
+        return float(row[0]), int(row[1])
 
     # --- step transitions ---------------------------------------------------------
 
