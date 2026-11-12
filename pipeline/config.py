@@ -83,6 +83,7 @@ class ModelRef[P: str](_Strict):
 LlmProvider = Literal["claude_cli", "anthropic_api"]
 TtsProvider = Literal["elevenlabs"]
 ImageProvider = Literal["fal", "replicate"]
+SttProvider = Literal["faster_whisper"]
 
 
 class LlmChain(_Strict):
@@ -100,6 +101,11 @@ class ImageChain(_Strict):
     fallback: ModelRef[ImageProvider] | None
 
 
+class SttChain(_Strict):
+    primary: ModelRef[SttProvider]
+    fallback: ModelRef[SttProvider] | None
+
+
 class LlmModels(_Strict):
     timeout_s: float = Field(gt=0, le=900)
     api_fallback: bool
@@ -110,20 +116,25 @@ class LlmModels(_Strict):
 class ModelsConfig(_Strict):
     llm: LlmModels
     tts: TtsChain
+    stt: SttChain
     images: ImageChain
 
 
 Mode = Literal["fake", "real"]
 
 
+PORTS = ("llm", "tts", "images", "stt")
+
+
 class ModeConfig(_Strict):
     llm: Mode
     tts: Mode
     images: Mode
+    stt: Mode
 
     @property
     def real_ports(self) -> tuple[str, ...]:
-        return tuple(port for port in ("llm", "tts", "images") if getattr(self, port) == "real")
+        return tuple(port for port in PORTS if getattr(self, port) == "real")
 
 
 class ChannelConfig(_Strict):

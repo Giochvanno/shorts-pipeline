@@ -31,16 +31,17 @@ from pipeline.config import BudgetConfig, SeriesConfig, load_series
 from pipeline.costs import BudgetExceeded, Ledger, metered
 from pipeline.logs import get_logger
 from pipeline.state import StateError, StateStore, StepStatus
-from pipeline.steps import render, script, visuals, voice
+from pipeline.steps import captions, render, script, visuals, voice
 from pipeline.steps.base import StepContext, StepError, StepResult
 
 StepFn = Callable[[StepContext], StepResult]
 
-# Stage 1 order. idea, captions, qa and publish join in stage 2.
+# idea, qa and publish join later in stage 2.
 DEFAULT_STEPS: tuple[tuple[str, StepFn], ...] = (
     ("script", script.run),
     ("voice", voice.run),
     ("visuals", visuals.run),
+    ("captions", captions.run),
     ("render", render.run),
 )
 
@@ -98,6 +99,7 @@ class Runner:
         notifier: Notifier | None = None,
         series_loader: Callable[[str], SeriesConfig] = load_series,
         budget: BudgetConfig | None = None,
+        language: str = "en",
         sleep: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
         clock: Callable[[], float] = time.monotonic,
@@ -111,6 +113,7 @@ class Runner:
         self._steps = tuple(steps)
         self._notifier = notifier
         self._load_series = series_loader
+        self._language = language
         self._sleep = sleep
         self._rng = rng or random.Random()
         self._clock = clock
@@ -144,6 +147,8 @@ class Runner:
             llm_light=self._adapters.llm_light,
             tts=self._adapters.tts,
             images=self._adapters.images,
+            stt=self._adapters.stt,
+            language=self._language,
         )
         outcomes: list[StepOutcome] = []
         for name, fn in self._steps:

@@ -14,11 +14,14 @@ from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
 from pipeline.adapters.llm.fake import FakeLlm
+from pipeline.adapters.stt import Transcriber
+from pipeline.adapters.stt.fake import FakeTranscriber
+from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsClient
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.config import LlmChain, ModeConfig, ModelsConfig
 
-ALL_FAKE = ModeConfig(llm="fake", tts="fake", images="fake")
+ALL_FAKE = ModeConfig(llm="fake", tts="fake", images="fake", stt="fake")
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +30,7 @@ class Adapters:
     llm_light: LlmClient  # titles, tags, stock queries
     tts: TtsClient
     images: ImageClient  # FLUX for scenes
+    stt: Transcriber  # word timings for captions
 
 
 def _real_llm(chain: LlmChain, models: ModelsConfig) -> LlmClient:
@@ -60,10 +64,13 @@ def build_adapters(
         heavy = light = FakeLlm()
     tts: TtsClient = FakeTts()
     images: ImageClient = FakeImages()
+    stt: Transcriber = (
+        WhisperTranscriber(models.stt.primary.model) if mode.stt == "real" else FakeTranscriber()
+    )
 
     if chaos is not None:  # chaos only ever wraps fakes
         if mode.llm == "fake":
             heavy = light = ChaosLlm(heavy, chaos, sleep)
         tts = ChaosTts(tts, chaos, sleep)
         images = ChaosImages(images, chaos, sleep)
-    return Adapters(llm_heavy=heavy, llm_light=light, tts=tts, images=images)
+    return Adapters(llm_heavy=heavy, llm_light=light, tts=tts, images=images, stt=stt)

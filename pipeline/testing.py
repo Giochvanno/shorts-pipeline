@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm.fake import FakeLlm
+from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.config import load_series
 from pipeline.steps.base import StepContext
@@ -24,4 +25,5 @@ def fake_context(
         llm_light=FakeLlm(),
         tts=FakeTts(),
         images=FakeImages(),
+        stt=FakeTranscriber(),
     )

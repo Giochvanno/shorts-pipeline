@@ -4,6 +4,7 @@ import pytest
 
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
 from pipeline.adapters.registry import ALL_FAKE, build_adapters
+from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.config import load_channel
 
 
@@ -44,3 +45,11 @@ def test_api_fallback_is_refused_until_its_adapter_exists() -> None:
 
     with pytest.raises(NotImplementedError, match="anthropic_api"):
         build_adapters(with_fallback, mode=ALL_FAKE.model_copy(update={"llm": "real"}))
+
+
+def test_real_stt_is_local_whisper_and_loads_nothing_up_front() -> None:
+    models = load_channel().models
+    adapters = build_adapters(models, mode=ALL_FAKE.model_copy(update={"stt": "real"}))
+
+    assert isinstance(adapters.stt, WhisperTranscriber)
+    assert adapters.stt.model == models.stt.primary.model  # model loads on first use only
