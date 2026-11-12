@@ -13,18 +13,22 @@ What makes it survive failures:
   stays "running" in the database, and the next Runner turns it into "failed"
   at startup and resumes exactly there.
 - Every decision is logged as a JSON line, which the soak report will aggregate.
+- Every adapter call is recorded in the cost ledger and checked against the budget
+  first; a reached limit stops the video (BudgetExceeded is never retried).
 """
 
 import random
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pipeline.adapters.errors import TransientAdapterError
 from pipeline.adapters.notify import Notifier
 from pipeline.adapters.registry import Adapters
-from pipeline.config import SeriesConfig, load_series
+from pipeline.config import BudgetConfig, SeriesConfig, load_series
+from pipeline.costs import BudgetExceeded, Ledger, metered
 from pipeline.logs import get_logger
 from pipeline.state import StateError, StateStore, StepStatus
 from pipeline.steps import render, script, visuals, voice
@@ -73,7 +77,7 @@ class VideoReport:
     video_id: int
     status: StepStatus
     steps: tuple[StepOutcome, ...]
-    cost_usd: float
+    cost_usd: float  # from the ledger: every paid call, failed attempts included
     elapsed_s: float
     output: Path | None
 
@@ -93,12 +97,15 @@ class Runner:
         steps: Sequence[tuple[str, StepFn]] = DEFAULT_STEPS,
         notifier: Notifier | None = None,
         series_loader: Callable[[str], SeriesConfig] = load_series,
+        budget: BudgetConfig | None = None,
         sleep: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._store = store
-        self._adapters = adapters
+        self.ledger = Ledger(store, budget, clock=wall_clock)
+        self._adapters = metered(adapters, self.ledger)
         self._runs_dir = runs_dir
         self._policy = policy or RetryPolicy()
         self._steps = tuple(steps)
@@ -154,7 +161,7 @@ class Runner:
             video_id=video_id,
             status=status,
             steps=tuple(outcomes),
-            cost_usd=sum(o.cost_usd for o in outcomes),
+            cost_usd=self._store.video_cost(video_id),
             elapsed_s=self._clock() - started,
             output=output if status == StepStatus.DONE and output.exists() else None,
         )
@@ -173,7 +180,10 @@ class Runner:
             self._store.start_step(video_id, name)
             step_started = self._clock()
             try:
-                result = fn(ctx)
+                with self.ledger.scope(video_id, name):
+                    result = fn(ctx)
+            except BudgetExceeded as e:
+                error, retryable = str(e), False  # waiting does not add money
             except StepError as e:
                 error, retryable = str(e), e.retryable
             except TransientAdapterError as e:

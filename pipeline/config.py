@@ -66,6 +66,13 @@ class UploadConfig(_Strict):
 
 class BudgetConfig(_Strict):
     max_cost_per_video_usd: float = Field(gt=0)
+    max_monthly_usd: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _month_covers_a_video(self) -> Self:
+        if self.max_monthly_usd < self.max_cost_per_video_usd:
+            raise ValueError("max_monthly_usd must be at least max_cost_per_video_usd")
+        return self
 
 
 class ModelRef[P: str](_Strict):

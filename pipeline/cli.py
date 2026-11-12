@@ -22,6 +22,7 @@ from pipeline.config import (
     load_series,
     load_topics,
 )
+from pipeline.costs import Ledger
 from pipeline.logs import get_logger, log_to_file
 from pipeline.runner import RetryPolicy, Runner, VideoReport
 from pipeline.state import StateStore, StepStatus, UnknownVideoError
@@ -121,6 +122,7 @@ def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
         runs_dir=args.runs_dir,
         policy=RetryPolicy(max_attempts=args.max_attempts, base_delay_s=args.retry_delay),
         notifier=ConsoleNotifier(),
+        budget=channel.budget,
     )
 
 
@@ -138,7 +140,7 @@ def _print_report(report: VideoReport, series_id: str, topic: str) -> None:
         if step.error:
             print(f"           {step.error}")
     where = f" -> {report.output}" if report.output else ""
-    print(f"{report.status} in {report.elapsed_s:.1f} s, ${report.cost_usd:.3f}{where}")
+    print(f"{report.status} in {report.elapsed_s:.1f} s, paid ${report.cost_usd:.3f}{where}")
 
 
 def run_command(args: argparse.Namespace) -> int:
@@ -189,12 +191,22 @@ def status_command(args: argparse.Namespace) -> int:
         videos = store.videos()
         if not videos:
             print("no videos yet")
+            return 0
+        budget = load_channel().budget
+        spend = Ledger(store, budget).spend()
+        print(
+            f"this month: ${spend.month_usd:.3f} of ${budget.max_monthly_usd:.2f}"
+            f" ({spend.month_calls} calls), per video limit ${budget.max_cost_per_video_usd:.2f}"
+        )
         for video in videos:
             steps = store.steps(video.id)
             current = next((s for s in steps if s.status != StepStatus.DONE), None)
             where = "" if current is None else f"  at {current.name} ({current.status})"
             state = store.video_status(video.id)
-            print(f"{video.id:>4}  {state:<8} {video.series_id}  {video.topic!r}{where}")
+            paid = store.video_cost(video.id)
+            print(
+                f"{video.id:>4}  {state:<8} ${paid:.3f}  {video.series_id}  {video.topic!r}{where}"
+            )
             if current is not None and current.error:
                 print(f"        last error: {current.error}")
     return 0

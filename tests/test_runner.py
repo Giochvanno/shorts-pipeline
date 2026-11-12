@@ -100,7 +100,8 @@ def test_runs_all_steps_in_order(store: StateStore, tmp_path: Path) -> None:
     assert report.status == StepStatus.DONE
     assert [o.step for o in report.steps] == ["a", "b", "c"]
     assert all(o.attempts == 1 for o in report.steps)
-    assert report.cost_usd == pytest.approx(0.03)
+    assert sum(o.cost_usd for o in report.steps) == pytest.approx(0.03)  # what steps reported
+    assert report.cost_usd == 0  # what the ledger saw: stubs call no adapter
 
 
 def test_retryable_error_is_retried_with_growing_pauses(
