@@ -24,6 +24,7 @@ from pipeline.adapters.images import ImageRequest, ImageResult
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.registry import Adapters, build_adapters
+from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.config import load_channel, load_topics
 from pipeline.runner import DEFAULT_STEPS, RetryPolicy, Runner, StepFn
@@ -137,6 +138,7 @@ def test_pure_garbage_is_never_saved(store: StateStore, tmp_path: Path, target: 
         images=ChaosImages(
             FakeImages(), always_garbage if target == "images" else clean, lambda _: None
         ),
+        stt=FakeTranscriber(),
     )
     runner = _runner(store, tmp_path, adapters)
     video = runner.create_video("fact-of-day", "why octopuses have three hearts")
@@ -172,7 +174,11 @@ def test_crash_mid_visuals_resumes_without_recalling_finished_work(
     store: StateStore, tmp_path: Path
 ) -> None:
     crashing = Adapters(
-        llm_heavy=FakeLlm(), llm_light=FakeLlm(), tts=FakeTts(), images=CrashAfter(good_calls=2)
+        llm_heavy=FakeLlm(),
+        llm_light=FakeLlm(),
+        tts=FakeTts(),
+        images=CrashAfter(good_calls=2),
+        stt=FakeTranscriber(),
     )
     video = _runner(store, tmp_path, crashing).create_video("fact-of-day", "how glass is made")
     with pytest.raises(Crash):
@@ -180,7 +186,13 @@ def test_crash_mid_visuals_resumes_without_recalling_finished_work(
 
     # A new process with fresh adapters picks up where the dead one stopped.
     fresh_llm, fresh_tts, fresh_images = FakeLlm(), FakeTts(), FakeImages()
-    fresh = Adapters(llm_heavy=fresh_llm, llm_light=fresh_llm, tts=fresh_tts, images=fresh_images)
+    fresh = Adapters(
+        llm_heavy=fresh_llm,
+        llm_light=fresh_llm,
+        tts=fresh_tts,
+        images=fresh_images,
+        stt=FakeTranscriber(),
+    )
     restarted = _runner(store, tmp_path, fresh)
     report = restarted.run_video(video)
 

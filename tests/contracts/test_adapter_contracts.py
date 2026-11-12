@@ -5,10 +5,14 @@ Today only the fakes are listed. Real adapters join these lists when they land
 """
 
 import io
+import itertools
 import json
 import subprocess
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -17,6 +21,9 @@ from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient, LlmRequest
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
 from pipeline.adapters.llm.fake import FakeLlm
+from pipeline.adapters.stt import Transcriber
+from pipeline.adapters.stt.fake import FakeTranscriber
+from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsClient, TtsRequest
 from pipeline.adapters.tts.fake import FakeTts
 
@@ -119,3 +126,46 @@ def test_images_return_a_real_image_with_seed_and_licence(images: ImageClient) -
     assert result.height > 0
     assert result.licence.strip()
     assert result.cost_usd >= 0
+
+
+# --- speech-to-text ---------------------------------------------------------------
+
+
+def WhisperOnFakeModel() -> Transcriber:
+    """The real adapter with the model replaced: CI has no faster-whisper and no network."""
+
+    class Model:
+        def transcribe(self, audio: Any, **_kwargs: Any) -> tuple[Iterable[Any], Any]:
+            words = [
+                SimpleNamespace(word=f" {w}", start=i * 0.4, end=i * 0.4 + 0.3, probability=0.9)
+                for i, w in enumerate(["octopuses", "have", "three", "hearts"])
+            ]
+            return iter([SimpleNamespace(words=words)]), SimpleNamespace(duration=1.6)
+
+    return WhisperTranscriber("small.en", load=lambda _name: Model(), decode=lambda _p: "samples")
+
+
+TRANSCRIBER_IMPLEMENTATIONS: list[Callable[[], Transcriber]] = [FakeTranscriber, WhisperOnFakeModel]
+
+
+@pytest.fixture(params=TRANSCRIBER_IMPLEMENTATIONS, ids=lambda f: f.__name__)
+def stt(request: pytest.FixtureRequest) -> Transcriber:
+    factory: Callable[[], Transcriber] = request.param
+    return factory()
+
+
+def test_transcriber_returns_ordered_words_inside_the_audio(
+    stt: Transcriber, tmp_path: Path
+) -> None:
+    audio = tmp_path / "voice.wav"
+    audio.write_bytes(FakeTts().synthesize(TTS_REQUEST).audio)
+
+    transcript = stt.transcribe(audio, language="en", hint=TTS_REQUEST.text)
+
+    assert transcript.words
+    assert all(w.word.strip() == w.word and w.word for w in transcript.words)
+    assert all(0 <= w.start <= w.end <= transcript.duration_s + 0.25 for w in transcript.words)
+    assert all(a.start <= b.start for a, b in itertools.pairwise(transcript.words))
+    assert transcript.provider == stt.provider
+    assert transcript.model == stt.model
+    assert transcript.cost_usd >= 0

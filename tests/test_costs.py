@@ -17,6 +17,7 @@ from pipeline.adapters.llm import LlmRequest
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.notify.fake import RecordingNotifier
 from pipeline.adapters.registry import Adapters
+from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.cli import DB_NAME, main
 from pipeline.config import BudgetConfig
@@ -58,7 +59,13 @@ def store(tmp_path: Path) -> Iterator[StateStore]:
 
 def _adapters(images: FakeImages | None = None) -> Adapters:
     llm = FakeLlm()
-    return Adapters(llm_heavy=llm, llm_light=llm, tts=FakeTts(), images=images or FakeImages())
+    return Adapters(
+        llm_heavy=llm,
+        llm_light=llm,
+        tts=FakeTts(),
+        images=images or FakeImages(),
+        stt=FakeTranscriber(),
+    )
 
 
 def _runner(
@@ -94,8 +101,10 @@ def test_every_adapter_call_is_recorded_per_step(store: StateStore, tmp_path: Pa
 
     rows = store.costs(video)
     scenes = len(script.load(tmp_path / "runs" / str(video)).scenes)
-    by_step = {step: [r for r in rows if r.step == step] for step in ("script", "voice", "visuals")}
-    assert [len(by_step[s]) for s in ("script", "voice", "visuals")] == [1, 1, scenes]
+    steps = ("script", "voice", "visuals", "captions")
+    by_step = {step: [r for r in rows if r.step == step] for step in steps}
+    assert [len(by_step[s]) for s in steps] == [1, 1, scenes, 1]
+    assert {r.unit for r in by_step["captions"]} == {"seconds"}
     assert {r.unit for r in by_step["script"]} == {"tokens"}
     assert {r.unit for r in by_step["voice"]} == {"characters"}
     assert {r.unit for r in by_step["visuals"]} == {"images"}
@@ -165,7 +174,9 @@ def test_monthly_limit_blocks_new_videos_but_last_month_does_not_count(
     old_spend("2026-10-31T23:59:59+00:00", 99.0)  # last month: ignored
     budget = BudgetConfig(max_cost_per_video_usd=0.5, max_monthly_usd=1.0)
     llm = FakeLlm()
-    adapters = Adapters(llm_heavy=llm, llm_light=llm, tts=FakeTts(), images=FakeImages())
+    adapters = Adapters(
+        llm_heavy=llm, llm_light=llm, tts=FakeTts(), images=FakeImages(), stt=FakeTranscriber()
+    )
 
     first = _runner(store, tmp_path, adapters, budget=budget)
     assert first.run_video(first.create_video("fact-of-day", TOPIC)).status == StepStatus.DONE

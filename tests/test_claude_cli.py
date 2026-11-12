@@ -18,6 +18,7 @@ from pipeline.adapters.llm import LlmRequest
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm, classify_failure
 from pipeline.adapters.llm.fake import fake_script
 from pipeline.adapters.registry import Adapters
+from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.config import load_series
 from pipeline.runner import DEFAULT_STEPS, RetryPolicy, Runner
@@ -240,7 +241,9 @@ def test_runner_records_claude_cli_calls_as_subscription(tmp_path: Path) -> None
     )
     process = FakeProcess(stdout=json.dumps(success(result=script_json, total_cost_usd=0.02)))
     llm = _llm(process)
-    adapters = Adapters(llm_heavy=llm, llm_light=llm, tts=FakeTts(), images=FakeImages())
+    adapters = Adapters(
+        llm_heavy=llm, llm_light=llm, tts=FakeTts(), images=FakeImages(), stt=FakeTranscriber()
+    )
     steps = list(DEFAULT_STEPS[:1])  # the script step only: the part this adapter serves
 
     with StateStore(tmp_path / "pipeline.db") as store:

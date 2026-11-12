@@ -106,3 +106,24 @@ def check_image(path: Path) -> None:
         raise MediaError(f"{path.name} is not a readable image: {e}") from e
     if not info.width or not info.height:
         raise MediaError(f"{path.name} is not a readable image")
+
+
+def decode_pcm16(path: Path, *, sample_rate: int) -> bytes:
+    """Any audio FFmpeg can read -> raw 16-bit little-endian mono PCM at `sample_rate`.
+
+    Used to feed speech recognition, so the whole project decodes audio one way.
+    """
+    command = [
+        find_tool("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error",
+        "-i", str(path), "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "-",
+    ]  # fmt: skip
+    try:
+        result = subprocess.run(
+            command, stdin=subprocess.DEVNULL, capture_output=True, timeout=120, check=False
+        )
+    except subprocess.TimeoutExpired as e:
+        raise MediaError(f"ffmpeg timed out decoding {path.name}") from e
+    if result.returncode != 0:
+        detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()[-1:]
+        raise MediaError(f"ffmpeg could not decode {path.name}: {' '.join(detail)}")
+    return result.stdout

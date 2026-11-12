@@ -44,6 +44,8 @@ uv run python -m pipeline run --series fact-of-day --chaos 0.3   # same, with fa
 uv run python -m pipeline status                                 # where every video stands
 uv run python -m pipeline resume --video 1                       # continue a failed video
 uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
+uv sync --extra stt                                              # once: faster-whisper for captions
+uv run python -m pipeline run --series fact-of-day --real stt    # real word timings (local, $0)
 uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
@@ -72,6 +74,7 @@ pipeline/            core library
   costs.py           cost ledger: every adapter call recorded, budget checked before paid calls
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
+                     captions: script words + speech timings, aligned with a diff
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
                      llm/claude_cli.py: Claude via `claude -p` on the subscription
 tests/               unit, architecture, chaos and render tests

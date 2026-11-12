@@ -18,10 +18,12 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from pipeline.adapters.images import ImageClient, ImageRequest, ImageResult
 from pipeline.adapters.llm import LlmClient, LlmRequest, LlmResponse
 from pipeline.adapters.registry import Adapters
+from pipeline.adapters.stt import Transcriber, Transcript
 from pipeline.adapters.tts import TtsClient, TtsRequest, TtsResult
 from pipeline.config import BudgetConfig
 from pipeline.state import CostRecord, StateStore
@@ -196,6 +198,31 @@ class MeteredImages:
         return result
 
 
+class MeteredTranscriber:
+    def __init__(self, inner: Transcriber, ledger: Ledger) -> None:
+        self.inner, self._ledger = inner, ledger
+
+    @property
+    def provider(self) -> str:
+        return self.inner.provider
+
+    @property
+    def model(self) -> str:
+        return self.inner.model
+
+    def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
+        self._ledger.check()
+        result = self.inner.transcribe(audio, language=language, hint=hint)
+        self._ledger.record(
+            provider=result.provider,
+            model=result.model,
+            unit="seconds",
+            units=result.duration_s,
+            cost_usd=result.cost_usd,
+        )
+        return result
+
+
 def metered(adapters: Adapters, ledger: Ledger) -> Adapters:
     """The same adapter set, with every call checked against the budget and recorded."""
     heavy = MeteredLlm(adapters.llm_heavy, ledger)
@@ -209,4 +236,5 @@ def metered(adapters: Adapters, ledger: Ledger) -> Adapters:
         llm_light=light,
         tts=MeteredTts(adapters.tts, ledger),
         images=MeteredImages(adapters.images, ledger),
+        stt=MeteredTranscriber(adapters.stt, ledger),
     )

@@ -10,6 +10,10 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[project.optional-dependencies]
+# Real speech-to-text for captions (CPU, local). CI runs on the fake and skips it.
+stt = ["faster-whisper>=1.2.1"]
+
 [dependency-groups]
 # Installed by `uv sync` by default; never shipped with the package.
 dev = [
@@ -49,6 +53,10 @@ python_version = "3.12"
 strict = true
 files = ["pipeline", "tests"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["faster_whisper", "faster_whisper.*", "numpy"]  # optional extra, untyped or absent in CI
+ignore_missing_imports = true
 
 # --- Tests ------------------------------------------------------------------
 [tool.pytest.ini_options]

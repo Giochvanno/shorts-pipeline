@@ -6,6 +6,7 @@ import pytest
 
 from pipeline.cli import DB_NAME, LOG_NAME, main, pick_topic
 from pipeline.media import probe
+from pipeline.runner import DEFAULT_STEPS
 from pipeline.state import StateStore
 
 
@@ -26,7 +27,8 @@ def test_run_makes_a_shorts_video_even_under_chaos(
     assert (info.width, info.height) == (1080, 1920)
     assert "done in" in out
     assert "$0.000" in out
-    assert (runs / LOG_NAME).read_text(encoding="utf-8").count('"event": "step_done"') == 4
+    log = (runs / LOG_NAME).read_text(encoding="utf-8")
+    assert log.count('"event": "step_done"') == len(DEFAULT_STEPS)
 
     assert main(["status", "--runs-dir", str(runs)]) == 0
     assert "done" in capsys.readouterr().out

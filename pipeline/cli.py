@@ -16,6 +16,7 @@ from pipeline.adapters.notify.console import ConsoleNotifier
 from pipeline.adapters.registry import ALL_FAKE, build_adapters
 from pipeline.config import (
     DEFAULT_CONFIG_DIR,
+    PORTS,
     ConfigError,
     list_series,
     load_channel,
@@ -48,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
             "--real",
             action="append",
             default=[],
-            choices=["llm", "tts", "images"],
+            choices=list(PORTS),
             help="make this port real for this run (repeatable)",
         )
         p.add_argument(
@@ -121,7 +122,7 @@ def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
     except NotImplementedError as e:
         print(f"error  {e}", file=sys.stderr)
         return None
-    ports = ", ".join(f"{port}={getattr(mode, port)}" for port in ("llm", "tts", "images"))
+    ports = ", ".join(f"{port}={getattr(mode, port)}" for port in PORTS)
     banner = f"adapters: {ports}" + ("" if mode.real_ports else " ($0)")
     if chaos is not None:
         banner += (
@@ -136,6 +137,7 @@ def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
         policy=RetryPolicy(max_attempts=args.max_attempts, base_delay_s=args.retry_delay),
         notifier=ConsoleNotifier(),
         budget=channel.budget,
+        language=channel.channel.language,
     )
 
 

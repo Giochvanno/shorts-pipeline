@@ -17,6 +17,7 @@ from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.notify.fake import RecordingNotifier
 from pipeline.adapters.registry import Adapters
+from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.logs import get_logger, log_to_file
 from pipeline.runner import DEFAULT_STEPS, RetryPolicy, Runner, StepFn
@@ -47,7 +48,13 @@ class Stub:
 
 
 def _adapters() -> Adapters:
-    return Adapters(llm_heavy=FakeLlm(), llm_light=FakeLlm(), tts=FakeTts(), images=FakeImages())
+    return Adapters(
+        llm_heavy=FakeLlm(),
+        llm_light=FakeLlm(),
+        tts=FakeTts(),
+        images=FakeImages(),
+        stt=FakeTranscriber(),
+    )
 
 
 @pytest.fixture

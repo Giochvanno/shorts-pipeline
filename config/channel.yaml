@@ -9,6 +9,7 @@ mode:
   llm: fake
   tts: fake
   images: fake
+  stt: fake                 # real = faster-whisper on the CPU (free, `uv sync --extra stt`)
 
 channel:
   name: "Fact of the Day (test)"
@@ -42,6 +43,9 @@ models:
   tts:
     primary:  { provider: elevenlabs, model: eleven_multilingual_v2 }
     fallback: null          # TODO: choose a fallback TTS provider (open question)
+  stt:                      # speech-to-text for captions, runs locally
+    primary:  { provider: faster_whisper, model: small.en }
+    fallback: null
   images:
     primary:  { provider: fal,       model: fal-ai/flux/dev }
     fallback: { provider: replicate, model: black-forest-labs/flux-dev }
