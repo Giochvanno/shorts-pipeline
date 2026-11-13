@@ -1,5 +1,6 @@
 """ASS subtitles: colours, times, one event per word, highlight, hook skipped, no flicker."""
 
+import itertools
 import re
 
 import pytest
@@ -100,3 +101,29 @@ def test_hook_ending_mid_chunk_keeps_only_the_rest_of_that_chunk() -> None:
 
 def test_override_characters_are_neutralised() -> None:
     assert escape("a{b}c\\N") == "a(b)c/N"
+
+
+def _seconds(stamp: str) -> float:
+    hours, minutes, seconds = stamp.split(":")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def test_events_never_overlap_even_when_a_word_has_zero_length() -> None:
+    # Real case (video 4): whisper gave "Scientists" zero length at the start of "suspect".
+    # Overlapping events make libass lift the caption a line for the whole word.
+    words = [
+        CaptionWord("Why", 18.0, 18.2),
+        CaptionWord("slow?", 18.2, 18.6),
+        CaptionWord("Scientists", 19.46, 19.46),
+        CaptionWord("suspect", 19.46, 20.0),
+        CaptionWord("solar", 20.0, 20.36),
+        CaptionWord("tides", 20.36, 20.74),
+    ]
+    events = _events(build_ass(words, chunk(words, 3), STYLE))
+
+    times = [(_seconds(start), _seconds(end)) for start, end, _ in events]
+    assert len(times) == len(words)
+    for (_, previous_end), (start, end) in itertools.pairwise(times):
+        assert start >= previous_end
+        assert end > start
+    assert times[-1][0] == pytest.approx(20.36)  # the shift does not snowball

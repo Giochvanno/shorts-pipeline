@@ -93,13 +93,18 @@ def build_ass(
     visible = [(max(c.first, first_word), c.last) for c in chunks if c.last >= first_word]
     on, off = ass_color(style.highlight), ass_color(style.color)
     lines = [header(style)]
+    previous_end = 0.0
     for n, (first, last) in enumerate(visible):
         next_start = words[visible[n + 1][0]].start if n + 1 < len(visible) else float("inf")
         chunk_end = min(next_start, words[last].end + LINGER_S)
         for k in range(first, last + 1):
-            start = words[k].start
+            # Events must never overlap: libass moves an overlapping event up a line and
+            # keeps it there, so the caption jumps. Seen on real speech, where whisper gave
+            # a word zero length and the minimum duration pushed it into the next word.
+            start = max(words[k].start, previous_end)
             end = words[k + 1].start if k < last else chunk_end
             end = max(end, start + _MIN_EVENT_S)
+            previous_end = end
             text = " ".join(
                 f"{{\\1c{on}}}{escape(w.text)}{{\\1c{off}}}" if i == k else escape(w.text)
                 for i, w in enumerate(words[first : last + 1], start=first)

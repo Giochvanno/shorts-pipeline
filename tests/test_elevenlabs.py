@@ -267,6 +267,33 @@ def test_hiccups_are_transient(status: int, error_body: bytes) -> None:
         make(FakeHttp(HttpResponse(status, error_body))).synthesize(REQUEST)
 
 
+FIXTURES = Path(__file__).parent / "fixtures" / "elevenlabs"
+
+
+@pytest.mark.parametrize(
+    ("name", "hint"),
+    [
+        ("401_invalid_api_key", "rejected the API key"),
+        ("404_voice_not_found", "does not know this voice"),
+        ("401_missing_permissions", "lacks a permission"),
+    ],
+)
+def test_real_error_answers_are_permanent_with_the_right_hint(name: str, hint: str) -> None:
+    status = int(name.split("_")[0])
+    error = classify_failure(status, (FIXTURES / f"{name}.json").read_bytes())
+
+    assert isinstance(error, PermanentAdapterError)
+    assert hint in str(error)
+    assert "request_id" in str(error)  # what ElevenLabs support asks for
+
+
+def test_missing_permission_is_named_not_blamed_on_the_key() -> None:
+    error = classify_failure(401, (FIXTURES / "401_missing_permissions.json").read_bytes())
+
+    assert "user_read" in str(error)
+    assert "check ELEVENLABS_API_KEY" not in str(error)
+
+
 def test_error_text_keeps_code_message_and_request_id_for_support() -> None:
     error = classify_failure(404, new_style("not_found", "voice_not_found", "Voice x not found"))
 
