@@ -1,18 +1,23 @@
 """Reference tests for render v0 with real FFmpeg: format, timing, text, audio, failures."""
 
+import json
 import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from pipeline.adapters.images.fake import gradient_png
 from pipeline.artifacts import read_meta
+from pipeline.ass import CaptionStyle, build_ass
 from pipeline.media import MediaError, probe
-from pipeline.steps import render, script, visuals, voice
+from pipeline.steps import captions, render, script, visuals, voice
 from pipeline.steps.base import StepContext, StepError
+from pipeline.steps.captions import CaptionWord
+from pipeline.steps.captions import chunk as caption_chunks
 from pipeline.testing import fake_context
 
 pytestmark = pytest.mark.usefixtures("ffmpeg")
@@ -170,7 +175,7 @@ def test_broken_input_fails_fast_and_leaves_nothing(
 @pytest.fixture(scope="session")
 def rendered_template(ffmpeg: None, tmp_path_factory: pytest.TempPathFactory) -> Path:
     ctx = fake_context(tmp_path_factory.mktemp("template") / "run")
-    for step in (script, voice, visuals, render):
+    for step in (script, voice, visuals, captions, render):
         step.run(ctx)
     return ctx.run_dir
 
@@ -226,3 +231,124 @@ def test_step_reports_missing_ffmpeg(
 
     with pytest.raises(StepError, match="not found in PATH"):
         render.run(rendered)
+
+
+# --- captions drawn by libass -----------------------------------------------------
+
+GRAY = (60, 60, 60)
+YELLOW = (244, 211, 94)
+W, H = 270, 480  # decoded frame size for caption checks (1/4 of 1080x1920)
+CAPTION_STYLE = CaptionStyle(
+    font="Montserrat ExtraBold",
+    size=render.CAPTION_FONT_SIZE,
+    color="#FFFFFF",
+    highlight="#F4D35E",
+    outline=render.CAPTION_OUTLINE,
+    margin_v=422,
+    margin_h=render.CAPTION_MARGIN_H,
+)
+BAND = (0, 330, W, 380)  # where a one-line caption sits with margin_v=422
+BOTTOM_ZONE = (0, 395, W, H)  # covered by YouTube's own buttons: must stay empty
+SIDES = [(0, 300, 12, H), (W - 12, 300, W, H)]
+
+
+def _frame_rgb(video: Path, at_s: float) -> bytes:
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{at_s}", "-i", str(video),
+         "-frames:v", "1", "-vf", f"scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True,
+    )  # fmt: skip
+    return result.stdout
+
+
+def _count(frame: bytes, region: tuple[int, int, int, int], match: Callable[..., bool]) -> int:
+    x0, y0, x1, y1 = region
+    total = 0
+    for y in range(y0, y1):
+        row = frame[(y * W + x0) * 3 : (y * W + x1) * 3]
+        total += sum(1 for i in range(0, len(row), 3) if match(*row[i : i + 3]))
+    return total
+
+
+def _white(r: int, g: int, b: int) -> bool:
+    return min(r, g, b) > 235
+
+
+def _yellow(r: int, g: int, b: int) -> bool:
+    return abs(r - YELLOW[0]) < 40 and abs(g - YELLOW[1]) < 40 and abs(b - YELLOW[2]) < 40
+
+
+@pytest.fixture
+def captioned(tmp_path: Path, ffmpeg: None) -> Path:
+    words = [
+        CaptionWord("Honey", 2.0, 2.3),
+        CaptionWord("outlives", 2.4, 2.7),
+        CaptionWord("pharaohs.", 2.8, 3.1),
+    ]
+    subtitles = build_ass(words, caption_chunks(words, 3), CAPTION_STYLE)
+    out = tmp_path / "captioned.mp4"
+    render.render_video(
+        frames=[_solid(tmp_path / "a.png", GRAY), _solid(tmp_path / "b.png", GRAY)],
+        scene_weights=[1, 1],
+        voice=_tone(tmp_path / "voice.wav", 4.0, gaps=True),
+        duration_s=4.0,
+        hook="This one sounds made up.",
+        font=render.font_path("Montserrat ExtraBold"),
+        output=out,
+        subtitles=subtitles,
+    )
+    return out
+
+
+def test_caption_shows_with_the_spoken_word_highlighted(captioned: Path) -> None:
+    frame = _frame_rgb(captioned, 2.5)  # "outlives" is being spoken
+
+    assert _count(frame, BAND, _white) > 30  # the other words of the chunk
+    assert _count(frame, BAND, _yellow) > 30  # the current word
+
+
+def test_no_caption_before_the_first_word_or_after_it_lingers(captioned: Path) -> None:
+    assert _count(_frame_rgb(captioned, 1.0), BAND, _white) == 0
+    assert _count(_frame_rgb(captioned, 3.8), BAND, _white) == 0  # 3.1 s + 0.3 s linger
+
+
+def test_caption_stays_out_of_youtube_buttons_and_off_the_edges(captioned: Path) -> None:
+    frame = _frame_rgb(captioned, 2.5)
+
+    def ink(r: int, g: int, b: int) -> bool:
+        return _white(r, g, b) or _yellow(r, g, b)
+
+    assert _count(frame, BOTTOM_ZONE, ink) == 0
+    assert all(_count(frame, side, ink) == 0 for side in SIDES)
+
+
+def test_step_draws_captions_but_not_over_the_hook(rendered: StepContext) -> None:
+    words, _ = captions.load(rendered.run_dir)
+    hook_words = len(script.load(rendered.run_dir).scenes[0].narration.split())
+    video = rendered.run_dir / render.OUTPUT
+    during_hook = words[1].start + 0.1
+    after_hook = words[hook_words + 1].start + 0.1
+
+    assert _count(_frame_rgb(video, during_hook), BAND, _white) == 0
+    assert _count(_frame_rgb(video, after_hook), BAND, _white) > 30
+
+
+def test_step_rerenders_when_captions_change(rendered: StepContext) -> None:
+    path = rendered.run_dir / captions.OUTPUT
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["words"][-1]["end"] -= 0.1
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    assert not render.run(rendered).cached
+
+
+def test_ffmpeg_without_libass_is_a_clear_error(
+    rendered: StepContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _solid(visuals.frame_paths(rendered.run_dir, 1)[0], RED)  # force a real render attempt
+    monkeypatch.setattr("pipeline.steps.render.has_filter", lambda _name: False)
+
+    with pytest.raises(StepError, match="libass") as exc:
+        render.run(rendered)
+
+    assert not exc.value.retryable
