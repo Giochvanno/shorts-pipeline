@@ -39,3 +39,6 @@ class StepResult:
     outputs: tuple[Path, ...]
     cost_usd: float
     cached: bool  # True = nothing was called, nothing was paid
+    # Shown under the step in the video report; "warning: ..." marks a problem that
+    # did not stop the video.
+    notes: tuple[str, ...] = ()

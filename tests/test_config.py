@@ -126,12 +126,19 @@ def test_unknown_provider_is_rejected(config_dir: Path) -> None:
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda d: d["mode"].update(tts="real"), "real word timings"),
+        (lambda d: d["mode"].update(tts="real"), "switched together"),
+        (lambda d: d["mode"].update(stt="real"), "switched together"),
         (lambda d: d["models"]["tts"].update(usd_per_credit=-1), "usd_per_credit"),
         (lambda d: d["models"]["tts"].update(usd_per_credit=0.2), "usd_per_credit"),
         (lambda d: d["models"]["tts"].pop("timeout_s"), "timeout_s"),
     ],
-    ids=["real-voice-fake-timings", "negative-price", "price-typo", "no-timeout"],
+    ids=[
+        "real-voice-fake-check",
+        "fake-voice-real-check",
+        "negative-price",
+        "price-typo",
+        "no-timeout",
+    ],
 )
 def test_broken_channel_is_rejected(config_dir: Path, mutate: Mutator, message: str) -> None:
     _edit(config_dir / "channel.yaml", mutate)

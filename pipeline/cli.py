@@ -168,6 +168,8 @@ def _print_report(report: VideoReport, series_id: str, topic: str) -> None:
         note = "cached" if step.cached and step.status == StepStatus.DONE else ""
         line = f"  {step.step:<8} {step.status:<8} {tries:<8} ${step.cost_usd:.3f}  {note}"
         print(line.rstrip())
+        for line_note in step.notes:
+            print(f"           {line_note}")
         if step.error:
             print(f"           {step.error}")
     where = f" -> {report.output}" if report.output else ""

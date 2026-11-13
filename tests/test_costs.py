@@ -103,10 +103,10 @@ def test_every_adapter_call_is_recorded_per_step(store: StateStore, tmp_path: Pa
     scenes = len(script.load(tmp_path / "runs" / str(video)).scenes)
     steps = ("script", "voice", "visuals", "captions")
     by_step = {step: [r for r in rows if r.step == step] for step in steps}
-    assert [len(by_step[s]) for s in steps] == [1, 1, scenes, 1]
-    assert {r.unit for r in by_step["captions"]} == {"seconds"}
+    # voice = synthesis + the check that listens to it; captions reuse what was heard.
+    assert [len(by_step[s]) for s in steps] == [1, 2, scenes, 0]
     assert {r.unit for r in by_step["script"]} == {"tokens"}
-    assert {r.unit for r in by_step["voice"]} == {"characters"}
+    assert {r.unit for r in by_step["voice"]} == {"characters", "seconds"}
     assert {r.unit for r in by_step["visuals"]} == {"images"}
     assert {r.billing for r in rows} == {"fake"}
     assert all(r.units > 0 for r in rows)

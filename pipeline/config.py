@@ -136,12 +136,13 @@ class ModeConfig(_Strict):
     stt: Mode
 
     @model_validator(mode="after")
-    def _real_voice_needs_real_timings(self) -> Self:
-        # The fake transcriber only hears FakeTts beeps; on real speech captions would fail.
-        if self.tts == "real" and self.stt == "fake":
+    def _voice_and_its_check_go_together(self) -> Self:
+        # The voice is checked by listening to it. The fake transcriber only hears FakeTts
+        # beeps, and whisper hears nothing in beeps: either way every take would fail.
+        if self.tts != self.stt:
             raise ValueError(
-                "a real voice (tts) needs real word timings for captions: make stt real too"
-                " (--real stt)"
+                "tts and stt are switched together: whisper checks the real voice,"
+                " the fake transcriber checks the fake one (--real tts --real stt)"
             )
         return self
 
@@ -229,6 +230,14 @@ class CaptionsConfig(_Strict):
     words_per_chunk: int = Field(ge=1, le=6)
     highlight_color: HexColor
     bottom_margin_ratio: float = Field(ge=0.05, le=0.5)
+    # tts: when each word is spoken, as reported by the voice provider (whisper if it
+    # reports nothing); whisper: as heard by speech recognition.
+    timing_source: Literal["tts", "whisper"]
+
+
+class QaConfig(_Strict):
+    voice_min_match: float = Field(ge=0.5, le=1.0)  # share of script words whisper must hear
+    voice_max_redos: int = Field(ge=0, le=5)  # new takes before the video fails
 
 
 class MusicConfig(_Strict):
@@ -245,6 +254,7 @@ class SeriesConfig(_Strict):
     visual_bible: VisualBible
     captions: CaptionsConfig
     music: MusicConfig
+    qa: QaConfig
 
     @field_validator("id")
     @classmethod
