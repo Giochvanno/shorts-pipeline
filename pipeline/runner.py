@@ -71,6 +71,7 @@ class StepOutcome:
     cost_usd: float
     cached: bool
     error: str | None = None
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,9 +212,17 @@ class Runner:
                         "cached": result.cached,
                         "cost_usd": result.cost_usd,
                         "elapsed_s": round(self._clock() - step_started, 3),
+                        "notes": list(result.notes),
                     },
                 )
-                return StepOutcome(name, StepStatus.DONE, attempt, result.cost_usd, result.cached)
+                return StepOutcome(
+                    name,
+                    StepStatus.DONE,
+                    attempt,
+                    result.cost_usd,
+                    result.cached,
+                    notes=result.notes,
+                )
 
             self._store.fail_step(video_id, name, error)
             log.warning(

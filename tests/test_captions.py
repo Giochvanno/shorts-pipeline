@@ -1,6 +1,7 @@
 """Captions: fake transcriber, word alignment, chunking, the step, the whisper adapter."""
 
 import itertools
+import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,11 +13,12 @@ from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterErro
 from pipeline.adapters.stt import Transcript, WordTiming
 from pipeline.adapters.stt.fake import FakeTranscriber, find_beeps
 from pipeline.adapters.stt.whisper import WhisperTranscriber, decode_for_whisper, vocabulary
-from pipeline.adapters.tts import TtsRequest
+from pipeline.adapters.tts import Alignment, TtsRequest
 from pipeline.adapters.tts.fake import FakeTts
 from pipeline.media import decode_pcm16
 from pipeline.steps import captions, script, voice
 from pipeline.steps.base import StepContext, StepError
+from pipeline.testing import TimedFakeTts
 
 
 def _wav(tmp_path: Path, text: str) -> Path:
@@ -149,17 +151,127 @@ def test_step_is_cached(voiced: StepContext) -> None:
     assert len(voiced.stt.calls) == 1
 
 
-def test_step_refuses_a_voice_that_does_not_match_the_script(voiced: StepContext) -> None:
+def test_step_refuses_timings_that_do_not_line_up_with_the_script(voiced: StepContext) -> None:
+    # The voice check normally catches this first; captions keep their own floor for voices
+    # made before the check existed (no saved transcript: captions listen themselves).
     class WrongVoice(FakeTranscriber):
         def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
             heard = super().transcribe(audio, language=language, hint=None)  # "word1", "word2"...
             return heard
 
-    with pytest.raises(StepError, match="voice does not match") as exc:
+    (voiced.run_dir / voice.TRANSCRIPT).unlink()
+    with pytest.raises(StepError, match="do not line up") as exc:
         captions.run(replace(voiced, stt=WrongVoice()))
 
-    assert not exc.value.retryable  # the voice must be redone, not the captions
+    assert not exc.value.retryable
     assert not (voiced.run_dir / captions.OUTPUT).exists()
+
+
+def test_step_uses_what_the_voice_check_heard_instead_of_listening_again(
+    voiced: StepContext,
+) -> None:
+    assert isinstance(voiced.stt, FakeTranscriber)
+    result = captions.run(voiced)
+
+    assert len(voiced.stt.calls) == 1  # the voice step's check only
+    assert result.notes == ("timings from whisper: the voice provider reports none",)
+
+
+# --- where the timings come from ------------------------------------------------------
+
+
+def _timed(ctx: StepContext, source: str = "tts", **tts: Any) -> StepContext:
+    """Script + voice from a provider that reports timings, captions set to `source`."""
+    chosen = ctx.series.voice.model_copy(update={"voice_id": "test-voice"})
+    style = ctx.series.captions.model_copy(update={"timing_source": source})
+    series = ctx.series.model_copy(update={"voice": chosen, "captions": style})
+    ctx = replace(ctx, series=series, tts=TimedFakeTts(**tts))
+    script.run(ctx)
+    voice.run(ctx)
+    return ctx
+
+
+def test_provider_timings_are_used_when_it_reports_them(ctx: StepContext) -> None:
+    ctx = _timed(ctx, offset_s=0.1)  # 0.1 s later than whisper: tells the two apart
+    result = captions.run(ctx)
+
+    words, _ = captions.load(ctx.run_dir)
+    expected = voice.alignment_words(voice.alignment(ctx.run_dir))  # type: ignore[arg-type]
+    assert [w.start for w in words] == pytest.approx([w.start for w in expected])
+    assert words[0].start == pytest.approx(0.1)
+    assert result.notes == ()
+    assert json.loads((ctx.run_dir / captions.OUTPUT).read_text())["timing_source"] == "tts"
+
+
+def test_whisper_source_ignores_provider_timings(ctx: StepContext) -> None:
+    ctx = _timed(ctx, "whisper", offset_s=0.1)
+    result = captions.run(ctx)
+
+    words, _ = captions.load(ctx.run_dir)
+    assert words[0].start == 0.0  # where the beep is, not the provider's 0.1
+    assert result.notes == ("timings from whisper (captions.timing_source)",)
+
+
+def test_timings_that_do_not_fit_the_audio_fall_back_to_whisper_with_a_warning(
+    ctx: StepContext,
+) -> None:
+    # As if the audio had been edited without passing the timings through Alignment.edited.
+    ctx = _timed(ctx, offset_s=1.0)
+    result = captions.run(ctx)
+
+    words, _ = captions.load(ctx.run_dir)
+    assert words[0].start == 0.0
+    assert result.notes[0].startswith("warning: the voice provider's timings do not fit")
+
+
+def test_switching_the_source_rebuilds_the_captions(ctx: StepContext) -> None:
+    ctx = _timed(ctx, offset_s=0.1)
+    captions.run(ctx)
+    style = ctx.series.captions.model_copy(update={"timing_source": "whisper"})
+    switched = replace(ctx, series=ctx.series.model_copy(update={"captions": style}))
+
+    assert not captions.run(switched).cached
+    assert captions.load(ctx.run_dir)[0][0].start == 0.0
+
+
+def test_edited_audio_moves_the_timings_the_same_way() -> None:
+    # Cut 0.5 s of leading silence, then play 1.25x faster: 1.5 s -> (1.5 - 0.5) / 1.25.
+    timings = Alignment(("a", " ", "b"), (0.2, 0.6, 1.5), (0.6, 1.5, 2.0))
+
+    edited = timings.edited(trim_start_s=0.5, tempo=1.25)
+
+    assert edited.characters == timings.characters
+    assert edited.starts_s == pytest.approx((0.0, 0.08, 0.8))  # never before the new start
+    assert edited.ends_s == pytest.approx((0.08, 0.8, 1.2))
+
+
+def test_trimmed_timings_line_up_with_the_audio_again() -> None:
+    request = TtsRequest(
+        text="one two three", voice_id="v", stability=0.5, similarity_boost=0.5, speed=1
+    )
+    late = TimedFakeTts(offset_s=0.5).synthesize(request).alignment
+    exact = TimedFakeTts().synthesize(request).alignment
+    assert late is not None and exact is not None
+
+    assert late.edited(trim_start_s=0.5).starts_s == pytest.approx(exact.starts_s)
+
+
+@pytest.mark.parametrize(
+    ("starts", "ends", "duration", "ok"),
+    [
+        ((0.0, 0.5), (0.4, 1.0), 1.0, True),
+        ((0.0, 0.5), (0.4, 1.2), 1.0, True),  # within the 0.25 s tolerance
+        ((0.0, 0.5), (0.4, 1.6), 1.0, False),  # runs past the audio
+        ((0.6, 0.5), (0.7, 0.9), 1.0, False),  # runs backwards
+        ((), (), 1.0, False),
+    ],
+)
+def test_fits(
+    starts: tuple[float, ...], ends: tuple[float, ...], duration: float, ok: bool
+) -> None:
+    timings = Alignment(tuple("ab"[: len(starts)]), starts, ends)
+
+    assert captions.fits(timings, duration) is ok
 
 
 def test_step_needs_the_voice_first(ctx: StepContext) -> None:

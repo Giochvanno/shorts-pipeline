@@ -1,17 +1,25 @@
 """Step `captions`: voice + script -> runs/<id>/captions.json with a timing for every word.
 
 The words on screen come from the script (exact spelling, no "gloo coast" for
-"glucose"); only the timings come from speech recognition. The two word lists
-are lined up with a diff:
+"glucose"); only the timings come from elsewhere, per `captions.timing_source`:
+
+- tts (default): when the voice provider says it spoke each word. Exact for the
+  text it was given; checked live against the audio (video 4: whisper started
+  words up to 0.95 s early after pauses, the provider never did).
+- whisper: what the voice check heard (voice_transcript.json).
+
+A provider without timings (a future fallback TTS), or timings that do not fit
+the audio (an edit that forgot `Alignment.edited`), fall back to whisper with a
+note in the video report. Either source is lined up with the script with a diff:
 
     script:  honey  outlives  pharaohs  here's  how
     heard:   honey  outlives  pharaoh's here's  how     <- misheard, same slot: take its time
     heard:   honey  outlives            here's  how     <- missed: time shared with neighbours
     heard:   ...    glucosoxidase                       <- merged: split the heard span
 
-The share of script words found in the audio is the "voice matches script"
-check: below MIN_MATCH the voice skipped or garbled the text, and captions would
-lie. That needs the voice redone, so the error is not retryable here.
+Whether the voice says the script is checked by the voice step (whisper, with
+a threshold and new takes). Here MIN_MATCH is only a sanity floor for the
+line-up itself; below it the captions would lie, so the step refuses.
 
 Words whisper is unsure about (probability below MIN_WORD_PROBABILITY) do not
 count as heard. Seen live: on speech it could not understand, whisper echoed
@@ -20,21 +28,23 @@ and would have passed the check with made-up timings.
 """
 
 import difflib
+import itertools
 import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from pipeline.adapters.stt import WordTiming
+from pipeline.adapters.tts import Alignment
 from pipeline.artifacts import file_hash, input_hash, is_cached, write_output
 from pipeline.steps import script as script_step
 from pipeline.steps import voice as voice_step
 from pipeline.steps.base import StepContext, StepError, StepResult
 
 OUTPUT = "captions.json"
-CAPTIONS_VERSION = 1
+CAPTIONS_VERSION = 2
 MIN_MATCH = 0.6
-MIN_WORD_PROBABILITY = 0.4
+MIN_WORD_PROBABILITY = voice_step.MIN_WORD_PROBABILITY
 _SENTENCE_END = (".", "!", "?")
 _TOLERANCE_S = 0.25
 
@@ -129,11 +139,47 @@ def chunk(words: list[CaptionWord], per_chunk: int) -> list[Chunk]:
     return chunks
 
 
+def fits(timings: Alignment, duration_s: float) -> bool:
+    """Provider timings that can belong to this audio: inside it, never running backwards."""
+    starts, ends = timings.starts_s, timings.ends_s
+    return (
+        bool(starts)
+        and starts[0] >= 0
+        and ends[-1] <= duration_s + _TOLERANCE_S
+        and all(a <= b for a, b in itertools.pairwise(starts))
+    )
+
+
+def _timings(
+    ctx: StepContext, audio: Path, duration_s: float, narration: str
+) -> tuple[tuple[WordTiming, ...], str, float, tuple[str, ...]]:
+    """(word timings, source used, cost, notes)."""
+    if ctx.series.captions.timing_source == "tts":
+        timings = voice_step.alignment(ctx.run_dir)
+        if timings is not None and fits(timings, duration_s):
+            return voice_step.alignment_words(timings), "tts", 0.0, ()
+        note = (
+            "timings from whisper: the voice provider reports none"
+            if timings is None
+            else "warning: the voice provider's timings do not fit the audio"
+            " (edited without Alignment.edited?): timings from whisper"
+        )
+    else:
+        note = "timings from whisper (captions.timing_source)"
+    heard = voice_step.transcript(ctx.run_dir)
+    if heard is not None:
+        return heard, "whisper", 0.0, (note,)
+    # A voice made before the voice check existed: listen now.
+    transcript = ctx.stt.transcribe(audio, language=ctx.language, hint=narration)
+    return transcript.words, "whisper", transcript.cost_usd, (note,)
+
+
 def run(ctx: StepContext) -> StepResult:
     narration = script_step.load(ctx.run_dir).narration
     audio, duration = voice_step.voice_file(ctx.run_dir)
     per_chunk = ctx.series.captions.words_per_chunk
     output = ctx.run_dir / OUTPUT
+    heard, source, cost, notes = _timings(ctx, audio, duration, narration)
     key = input_hash(
         {
             "step": "captions",
@@ -141,20 +187,18 @@ def run(ctx: StepContext) -> StepResult:
             "voice": file_hash(audio),
             "text": narration,
             "words_per_chunk": per_chunk,
-            "language": ctx.language,
-            "provider": ctx.stt.provider,
-            "model": ctx.stt.model,
+            "source": source,
+            "heard": [[w.word, w.start, w.end, w.probability] for w in heard],
         }
     )
     if is_cached(output, key):
-        return StepResult(outputs=(output,), cost_usd=0.0, cached=True)
+        return StepResult(outputs=(output,), cost_usd=cost, cached=cost == 0, notes=notes)
 
-    transcript = ctx.stt.transcribe(audio, language=ctx.language, hint=narration)
-    words, match = align(narration.split(), transcript.words, duration)
+    words, match = align(narration.split(), heard, duration)
     if match < MIN_MATCH:
         raise StepError(
-            f"voice does not match the script: only {match:.0%} of the words were heard"
-            " (redo the voice)",
+            f"captions do not line up with the script: only {match:.0%} of the words"
+            f" found in the {source} timings",
             retryable=False,
         )
     late = [w.text for w in words if w.end > duration + _TOLERANCE_S]
@@ -163,6 +207,7 @@ def run(ctx: StepContext) -> StepResult:
 
     chunks = chunk(words, per_chunk)
     data = {
+        "timing_source": source,
         "match_ratio": round(match, 3),
         "words": [asdict(w) for w in words],
         "chunks": [asdict(c) for c in chunks],
@@ -172,15 +217,14 @@ def run(ctx: StepContext) -> StepResult:
         json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8"),
         key,
         {
-            "provider": transcript.provider,
-            "model": transcript.model,
-            "cost_usd": transcript.cost_usd,
+            "timing_source": source,
+            "cost_usd": cost,
             "match_ratio": round(match, 3),
             "words": len(words),
             "chunks": len(chunks),
         },
     )
-    return StepResult(outputs=(output,), cost_usd=transcript.cost_usd, cached=False)
+    return StepResult(outputs=(output,), cost_usd=cost, cached=False, notes=notes)
 
 
 def load(run_dir: Path) -> tuple[list[CaptionWord], list[Chunk]]:

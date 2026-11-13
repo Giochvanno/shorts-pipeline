@@ -27,6 +27,22 @@ class Alignment:
     starts_s: tuple[float, ...]
     ends_s: tuple[float, ...]
 
+    def edited(self, *, trim_start_s: float = 0.0, tempo: float = 1.0) -> "Alignment":
+        """The same timings after an edit of the audio: the first `trim_start_s` seconds
+        cut off, then played `tempo` times faster. Any edit of the voice audio must pass
+        its timings through here, or captions drift by exactly that edit."""
+        if trim_start_s < 0 or tempo <= 0:
+            raise ValueError("trim_start_s must be >= 0 and tempo > 0")
+
+        def move(t: float) -> float:
+            return max(0.0, (t - trim_start_s) / tempo)
+
+        return Alignment(
+            characters=self.characters,
+            starts_s=tuple(move(t) for t in self.starts_s),
+            ends_s=tuple(move(t) for t in self.ends_s),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class TtsResult:

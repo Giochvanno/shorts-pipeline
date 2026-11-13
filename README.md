@@ -44,9 +44,8 @@ uv run python -m pipeline run --series fact-of-day --chaos 0.3   # same, with fa
 uv run python -m pipeline status                                 # where every video stands
 uv run python -m pipeline resume --video 1                       # continue a failed video
 uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
-uv sync --extra stt                                              # once: faster-whisper for captions
-uv run python -m pipeline run --series fact-of-day --real stt    # real word timings (local, $0)
-uv run python -m pipeline run --series fact-of-day --real tts    # real voice (ElevenLabs, credits)
+uv sync --extra stt                                              # once: faster-whisper (voice check)
+uv run python -m pipeline run --series fact-of-day --real tts --real stt   # real voice, checked
 uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
@@ -79,7 +78,9 @@ pipeline/            core library
   ass.py             word-by-word captions as ASS subtitles (libass), spoken word highlighted
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
-                     captions: script words + speech timings, aligned with a diff
+                     voice: synthesized, then checked by listening (whisper), redone if wrong
+                     captions: script words + provider (or whisper) timings, aligned with a diff
+  text.py            spoken form for comparing ("243" == "two hundred forty-three")
   env.py             reads secrets from .env (no dependency)
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
                      http.py: stdlib HTTP behind a swappable transport (fake in tests)

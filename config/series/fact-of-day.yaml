@@ -48,7 +48,12 @@ captions:
   words_per_chunk: 3
   highlight_color: "#C1666B"  # from the palette
   bottom_margin_ratio: 0.22  # share of frame height kept free at the bottom
+  timing_source: tts  # tts: word timings from the voice provider (whisper if it has none) | whisper
 
 music:
   moods: [curious, light]
   duck_below_voice_db: 18    # music sits this many dB under the voice
+
+qa:
+  voice_min_match: 0.95  # whisper must hear this share of the script words, else the voice is redone
+  voice_max_redos: 2     # new takes after the first; then the video fails with an alert
