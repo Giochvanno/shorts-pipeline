@@ -64,7 +64,7 @@ uv run pytest                # tests
 ## Layout
 
 ```
-assets/fonts/        Montserrat ExtraBold + its OFL licence (text is drawn by FFmpeg)
+assets/fonts/        Montserrat ExtraBold + its OFL licence (hook and captions drawn by FFmpeg)
 config/              channel.yaml (models, budget, upload) + series/*.yaml (style bibles)
 pipeline/            core library
   config.py          typed config schema; hard rules live in code, not YAML
@@ -72,6 +72,7 @@ pipeline/            core library
   runner.py          step order, retries with backoff + jitter, alerts, JSON logs
   artifacts.py       atomic writes + cache keyed by input hash (never pay twice)
   costs.py           cost ledger: every adapter call recorded, budget checked before paid calls
+  ass.py             word-by-word captions as ASS subtitles (libass), spoken word highlighted
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
                      captions: script words + speech timings, aligned with a diff

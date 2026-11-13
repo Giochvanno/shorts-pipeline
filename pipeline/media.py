@@ -4,6 +4,7 @@ FFmpeg is called with an argument list (never a shell string), so paths with
 spaces or Cyrillic letters on Windows need no quoting.
 """
 
+import functools
 import json
 import shutil
 import subprocess
@@ -127,3 +128,13 @@ def decode_pcm16(path: Path, *, sample_rate: int) -> bytes:
         detail = result.stderr.decode("utf-8", errors="replace").strip().splitlines()[-1:]
         raise MediaError(f"ffmpeg could not decode {path.name}: {' '.join(detail)}")
     return result.stdout
+
+
+@functools.cache
+def has_filter(name: str) -> bool:
+    """Whether this FFmpeg build has a filter (e.g. `ass` needs FFmpeg built with libass)."""
+    result = subprocess.run(
+        [find_tool("ffmpeg"), "-hide_banner", "-nostdin", "-filters"],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, check=False,
+    )  # fmt: skip
+    return any(line.split()[1:2] == [name] for line in result.stdout.splitlines())

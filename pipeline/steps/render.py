@@ -1,8 +1,10 @@
-"""Step `render` v0: frames + voice (+ music) + hook text -> runs/<id>/video.mp4, 1080x1920.
+"""Step `render`: frames + voice (+ music) + hook + captions -> runs/<id>/video.mp4, 1080x1920.
 
-v0: static frames timed by each scene's share of words, the hook drawn over
-scene 1, optional music ducked under the voice. v1 adds Ken Burns motion,
-word-timed animated captions and loudness normalisation.
+Static frames timed by each scene's share of words, the hook drawn over scene 1,
+word-by-word captions (current word highlighted) from the captions step, optional
+music ducked under the voice. Still to come: Ken Burns motion, loudness normalisation.
+
+Captions skip the hook's words: the hook is already on screen in large type.
 
 Text is drawn by FFmpeg, never by the image model. FFmpeg runs in a scratch
 folder with the font and text files next to it, so filter arguments only hold
@@ -17,7 +19,9 @@ from itertools import pairwise
 from pathlib import Path
 
 from pipeline.artifacts import file_hash, input_hash, invalidate, is_cached, write_meta
-from pipeline.media import MediaError, check_image, run_ffmpeg
+from pipeline.ass import CaptionStyle, build_ass
+from pipeline.media import MediaError, check_image, has_filter, run_ffmpeg
+from pipeline.steps import captions as captions_step
 from pipeline.steps import script as script_step
 from pipeline.steps import visuals as visuals_step
 from pipeline.steps import voice as voice_step
@@ -29,7 +33,11 @@ FONTS_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
 WIDTH, HEIGHT, FPS = 1080, 1920, 30
 CRF = 20  # visually clean, reasonable size
 # Bump when the filter graph changes, so cached videos are rebuilt.
-RENDER_VERSION = 1
+RENDER_VERSION = 2
+
+CAPTION_FONT_SIZE = 96  # readable on a phone; three words still fit one line
+CAPTION_OUTLINE = 6
+CAPTION_MARGIN_H = 90
 
 HOOK_FONT_SIZE = 84
 HOOK_LINE_CHARS = 16  # ~800 px at this size: safe margins at 1080 px wide
@@ -74,7 +82,9 @@ def wrap_hook(text: str) -> list[str]:
     return textwrap.wrap(text.strip(), width=HOOK_LINE_CHARS, break_long_words=False) or [""]
 
 
-def _video_filters(count: int, hook_lines: Sequence[str], hook_end_s: float) -> list[str]:
+def _video_filters(
+    count: int, hook_lines: Sequence[str], hook_end_s: float, *, subtitles: bool
+) -> list[str]:
     fit = (
         f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase,"
         f"crop={WIDTH}:{HEIGHT},setsar=1,fps={FPS},format=yuv420p"
@@ -85,12 +95,15 @@ def _video_filters(count: int, hook_lines: Sequence[str], hook_end_s: float) -> 
     line_height = HOOK_FONT_SIZE * HOOK_LINE_SPACING
     top = HEIGHT * HOOK_TOP_RATIO
     draws = [
-        f"drawtext=fontfile=font.ttf:textfile=hook_{n}.txt:expansion=none"
+        f"drawtext=fontfile=fonts/font.ttf:textfile=hook_{n}.txt:expansion=none"
         f":fontsize={HOOK_FONT_SIZE}:fontcolor=white:borderw=6:bordercolor=black@0.85"
         f":x=(w-text_w)/2:y={top + n * line_height:.0f}"
         f":enable='lt(t,{hook_end_s:.3f})'"
         for n in range(len(hook_lines))
     ]
+    if subtitles:
+        # libass loads every file in fontsdir as a font: keep only the font in there.
+        draws.append("ass=captions.ass:fontsdir=fonts")
     parts.append("[vcat]" + ",".join(draws) + "[vout]")
     return parts
 
@@ -117,8 +130,17 @@ def render_video(
     output: Path,
     music: Path | None = None,
     duck_db: float = 18.0,
+    subtitles: str | None = None,
 ) -> None:
-    """Pure FFmpeg assembly; knows nothing about steps, configs or caching."""
+    """Pure FFmpeg assembly; knows nothing about steps, configs or caching.
+
+    `subtitles` is the text of an ASS file (see pipeline/ass.py).
+    """
+    if subtitles is not None and not has_filter("ass"):
+        raise MediaError(
+            "this FFmpeg has no libass (the `ass` filter) for captions: install a full build"
+            " (on Windows: the 'full' build from gyan.dev)"
+        )
     if len(frames) != len(scene_weights):
         raise ValueError("one frame per scene is required")
     counts = frame_counts(scene_weights, duration_s)
@@ -135,7 +157,7 @@ def render_video(
         music_input = voice_input + 1
         args += ["-stream_loop", "-1", "-i", str(music.resolve())]
 
-    graph = _video_filters(len(frames), hook_lines, counts[0] / FPS)
+    graph = _video_filters(len(frames), hook_lines, counts[0] / FPS, subtitles=bool(subtitles))
     graph += _audio_filters(voice_input, music_input, duck_db)
     tmp = output.with_name(output.stem + ".tmp" + output.suffix)  # FFmpeg needs the .mp4 suffix
     args += [
@@ -152,7 +174,10 @@ def render_video(
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="render_") as scratch_name:
         scratch = Path(scratch_name)
-        shutil.copyfile(font, scratch / "font.ttf")
+        (scratch / "fonts").mkdir()
+        shutil.copyfile(font, scratch / "fonts" / "font.ttf")
+        if subtitles is not None:
+            (scratch / "captions.ass").write_text(subtitles, encoding="utf-8")
         for n, line in enumerate(hook_lines):
             (scratch / f"hook_{n}.txt").write_text(line, encoding="utf-8")
         try:
@@ -172,6 +197,24 @@ def run(ctx: StepContext) -> StepResult:
     weights = [max(len(s.narration.split()), 1) for s in scenes]
     hook = scenes[0].narration
     output = ctx.run_dir / OUTPUT
+    words, chunks = captions_step.load(ctx.run_dir)
+    style = ctx.series.captions
+    subtitles = build_ass(
+        words,
+        chunks,
+        CaptionStyle(
+            font=style.font,
+            size=CAPTION_FONT_SIZE,
+            color="#FFFFFF",
+            highlight=style.highlight_color,
+            outline=CAPTION_OUTLINE,
+            margin_v=round(style.bottom_margin_ratio * HEIGHT),
+            margin_h=CAPTION_MARGIN_H,
+            width=WIDTH,
+            height=HEIGHT,
+        ),
+        first_word=len(hook.split()),
+    )
 
     key = input_hash(
         {
@@ -182,6 +225,7 @@ def run(ctx: StepContext) -> StepResult:
             "font": file_hash(font),
             "weights": weights,
             "hook": hook,
+            "subtitles": subtitles,  # holds every caption time, word and style value
             "duration_s": duration,
             "settings": [WIDTH, HEIGHT, FPS, CRF],
         }
@@ -201,6 +245,7 @@ def run(ctx: StepContext) -> StepResult:
             hook=hook,
             font=font,
             output=output,
+            subtitles=subtitles,
         )
     except MediaError as e:
         # FFmpeg errors are deterministic for the same inputs: retrying will not help.
