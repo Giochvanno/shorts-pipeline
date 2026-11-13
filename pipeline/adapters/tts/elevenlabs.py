@@ -47,6 +47,9 @@ _CREDITS_HINT = "ElevenLabs credits are used up: wait for the monthly reset or u
 _VOICE_HINT = "ElevenLabs does not know this voice: check voice.voice_id in config/series"
 _MODEL_HINT = "ElevenLabs does not offer this model to the account: check models.tts"
 _ACCESS_HINT = "this ElevenLabs key may not use text-to-speech or this voice/model"
+_PERMISSION_HINT = (
+    "the ElevenLabs key lacks a permission (named below): enable it in the key settings"
+)
 
 _QUOTA_CODES = frozenset({"quota_exceeded", "insufficient_credits", "payment_required"})
 _VOICE_CODES = frozenset({"voice_not_found", "invalid_voice_id"})
@@ -64,50 +67,57 @@ def probe_mp3_duration(audio: bytes) -> float:
         return probe(path).duration_s
 
 
-def _error_detail(body: bytes) -> tuple[str, str]:
-    """(code, message) from an ElevenLabs error body; tolerant of every shape seen in docs.
+def _error_detail(body: bytes) -> tuple[tuple[str, ...], str]:
+    """(codes, message) from an ElevenLabs error body; tolerant of every shape seen.
 
-    `detail` is an object (`code`, legacy `status`, `type`, `message`), a list of
-    validation errors (422), or a plain string. Non-JSON bodies (a proxy's HTML
-    page) are shortened to one line.
+    `detail` is an object, a list of validation errors (422), or a plain string.
+    Real answers carry both `code` and the legacy `status`, and `status` can be
+    the more specific one (`unauthorized` / `missing_permissions`), so all of
+    `code`, `status` and `type` are kept. Non-JSON bodies (a proxy's HTML page)
+    are shortened to one line.
     """
     try:
         data = json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return "", _short(body.decode("utf-8", errors="replace"))
+        return (), _short(body.decode("utf-8", errors="replace"))
     detail = data.get("detail") if isinstance(data, dict) else data
     if isinstance(detail, dict):
-        code = str(detail.get("code") or detail.get("status") or detail.get("type") or "")
+        found = (detail.get(key) for key in ("code", "status", "type"))
+        codes = tuple(dict.fromkeys(str(c) for c in found if c))  # unique, in order
         message = str(detail.get("message") or "")
         request_id = detail.get("request_id")
         if request_id:
             message = f"{message} [request_id {request_id}]"
-        return code, _short(message)
+        return codes, _short(message)
     if isinstance(detail, list):  # 422: [{"loc": [...], "msg": "...", "type": "..."}]
         parts = []
         for item in detail:
             if isinstance(item, dict):
                 where = ".".join(str(x) for x in item.get("loc") or [])
                 parts.append(f"{where}: {item.get('msg', '')}".strip(": "))
-        return "validation_error", _short("; ".join(parts))
-    return "", _short(str(detail))
+        return ("validation_error",), _short("; ".join(parts))
+    return (), _short(str(detail))
 
 
 def classify_failure(status: int, body: bytes) -> Exception:
     """Turn a non-2xx answer into the error type the runner understands.
 
-    The error code decides first (no credits can arrive as 401, 402 or 400);
+    The error codes decide first (no credits can arrive as 401, 402 or 400);
     the HTTP status is the fallback.
     """
-    code, message = _error_detail(body)
-    detail = " ".join(filter(None, [f"HTTP {status}", code, message]))
-    if code in _QUOTA_CODES or status == 402:
+    codes, message = _error_detail(body)
+    found = set(codes)
+    shown = "/".join(codes[:2])  # code and legacy status; the type adds nothing
+    detail = " ".join(filter(None, [f"HTTP {status}", shown, message]))
+    if found & _QUOTA_CODES or status == 402:
         return PermanentAdapterError(f"{_CREDITS_HINT} ({detail})")
+    if "missing_permissions" in found:
+        return PermanentAdapterError(f"{_PERMISSION_HINT} ({detail})")
     if status == 401:
         return PermanentAdapterError(f"{_KEY_HINT} ({detail})")
-    if code in _VOICE_CODES:
+    if found & _VOICE_CODES:
         return PermanentAdapterError(f"{_VOICE_HINT} ({detail})")
-    if code in _MODEL_CODES:
+    if found & _MODEL_CODES:
         return PermanentAdapterError(f"{_MODEL_HINT} ({detail})")
     if status == 403:
         return PermanentAdapterError(f"{_ACCESS_HINT} ({detail})")
