@@ -123,6 +123,23 @@ def test_unknown_provider_is_rejected(config_dir: Path) -> None:
         load_channel(config_dir)
 
 
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda d: d["mode"].update(tts="real"), "real word timings"),
+        (lambda d: d["models"]["tts"].update(usd_per_credit=-1), "usd_per_credit"),
+        (lambda d: d["models"]["tts"].update(usd_per_credit=0.2), "usd_per_credit"),
+        (lambda d: d["models"]["tts"].pop("timeout_s"), "timeout_s"),
+    ],
+    ids=["real-voice-fake-timings", "negative-price", "price-typo", "no-timeout"],
+)
+def test_broken_channel_is_rejected(config_dir: Path, mutate: Mutator, message: str) -> None:
+    _edit(config_dir / "channel.yaml", mutate)
+
+    with pytest.raises(ConfigError, match=message):
+        load_channel(config_dir)
+
+
 def test_series_id_must_match_file_name(config_dir: Path) -> None:
     _edit_series(config_dir, lambda d: d.update(id="other-series"))
 

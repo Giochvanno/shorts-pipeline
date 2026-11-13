@@ -28,7 +28,7 @@ script:
   extra_banned_topics: []   # added on top of the hard-banned topics in code
 
 voice:
-  voice_id: CHANGE_ME       # [YOURS] ElevenLabs voice ID
+  voice_id: XrExE9yKIg1WjnnlVkGX       # [YOURS] ElevenLabs voice ID
   stability: 0.5
   similarity_boost: 0.75
   speed: 1.0

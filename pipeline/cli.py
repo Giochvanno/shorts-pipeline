@@ -11,6 +11,8 @@ import sys
 from importlib.metadata import version
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from pipeline.adapters.chaos import ChaosConfig
 from pipeline.adapters.notify.console import ConsoleNotifier
 from pipeline.adapters.registry import ALL_FAKE, build_adapters
@@ -18,12 +20,14 @@ from pipeline.config import (
     DEFAULT_CONFIG_DIR,
     PORTS,
     ConfigError,
+    ModeConfig,
     list_series,
     load_channel,
     load_series,
     load_topics,
 )
 from pipeline.costs import Ledger
+from pipeline.env import load_env
 from pipeline.logs import get_logger, log_to_file
 from pipeline.runner import RetryPolicy, Runner, VideoReport
 from pipeline.state import StateStore, StepStatus, UnknownVideoError
@@ -108,10 +112,22 @@ def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
     channel = load_channel()
     mode = ALL_FAKE if args.mode == "fake" else channel.mode
     if args.real:
-        mode = mode.model_copy(update=dict.fromkeys(args.real, "real"))
+        try:  # validate again: some ports only make sense together
+            mode = ModeConfig.model_validate(
+                {**mode.model_dump(), **dict.fromkeys(args.real, "real")}
+            )
+        except ValidationError as e:
+            reason = "; ".join(err["msg"].removeprefix("Value error, ") for err in e.errors())
+            print(f"error  {reason}", file=sys.stderr)
+            return None
     if args.chaos > 0 and mode.real_ports:
         print("error  --chaos works with fake ports only", file=sys.stderr)
         return None
+    if mode.real_ports:
+        # Keys for real providers; the shell's own variables win over the file.
+        loaded = load_env(Path.cwd() / ".env")
+        if loaded:
+            print(f"secrets from .env: {', '.join(loaded)}")
     chaos = None
     if args.chaos > 0:
         chaos = ChaosConfig(

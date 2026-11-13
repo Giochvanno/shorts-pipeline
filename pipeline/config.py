@@ -92,6 +92,9 @@ class LlmChain(_Strict):
 
 
 class TtsChain(_Strict):
+    timeout_s: float = Field(gt=0, le=600)
+    # Plan price / plan credits. Credits per call come from the provider's answer.
+    usd_per_credit: float = Field(ge=0, le=0.01)
     primary: ModelRef[TtsProvider]
     fallback: ModelRef[TtsProvider] | None
 
@@ -131,6 +134,16 @@ class ModeConfig(_Strict):
     tts: Mode
     images: Mode
     stt: Mode
+
+    @model_validator(mode="after")
+    def _real_voice_needs_real_timings(self) -> Self:
+        # The fake transcriber only hears FakeTts beeps; on real speech captions would fail.
+        if self.tts == "real" and self.stt == "fake":
+            raise ValueError(
+                "a real voice (tts) needs real word timings for captions: make stt real too"
+                " (--real stt)"
+            )
+        return self
 
     @property
     def real_ports(self) -> tuple[str, ...]:

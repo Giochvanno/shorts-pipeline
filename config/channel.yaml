@@ -41,6 +41,8 @@ models:
       primary:  { provider: claude_cli,    model: claude-haiku-5-5 }
       fallback: { provider: anthropic_api, model: claude-haiku-5-5 }
   tts:
+    timeout_s: 60           # one request; a 45 s narration is synthesized in seconds
+    usd_per_credit: 0.0002  # Starter: $6 / 30,000 credits. Credits per call come from the API
     primary:  { provider: elevenlabs, model: eleven_multilingual_v2 }
     fallback: null          # TODO: choose a fallback TTS provider (open question)
   stt:                      # speech-to-text for captions, runs locally

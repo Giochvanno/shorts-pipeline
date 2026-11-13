@@ -4,6 +4,7 @@ Today only the fakes are listed. Real adapters join these lists when they land
 (marked to run only with API keys), so fake and real can never drift apart.
 """
 
+import base64
 import io
 import itertools
 import json
@@ -16,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from pipeline.adapters.http import HttpRequest, HttpResponse
 from pipeline.adapters.images import ImageClient, ImageRequest
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.llm import LlmClient, LlmRequest
@@ -25,6 +27,7 @@ from pipeline.adapters.stt import Transcriber
 from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsClient, TtsRequest
+from pipeline.adapters.tts.elevenlabs import ElevenLabsTts
 from pipeline.adapters.tts.fake import FakeTts
 
 
@@ -45,8 +48,24 @@ def ClaudeCliOnFakeProcess() -> LlmClient:
     return ClaudeCliLlm("model-from-config", run=run, which=lambda _name: "claude")
 
 
+def ElevenLabsOnFakeHttp() -> TtsClient:
+    """The real adapter with the network replaced: CI has no key and must not pay."""
+
+    def transport(_request: HttpRequest) -> HttpResponse:
+        answer = {"audio_base64": base64.b64encode(b"ID3audio").decode(), "alignment": None}
+        return HttpResponse(200, json.dumps(answer).encode(), {"character-cost": "43"})
+
+    return ElevenLabsTts(
+        "model-from-config",
+        api_key="test-key",
+        usd_per_credit=0.0002,
+        transport=transport,
+        measure=lambda _audio: 2.5,
+    )
+
+
 LLM_IMPLEMENTATIONS: list[Callable[[], LlmClient]] = [FakeLlm, ClaudeCliOnFakeProcess]
-TTS_IMPLEMENTATIONS: list[Callable[[], TtsClient]] = [FakeTts]
+TTS_IMPLEMENTATIONS: list[Callable[[], TtsClient]] = [FakeTts, ElevenLabsOnFakeHttp]
 
 TTS_REQUEST = TtsRequest(
     text="Octopuses have three hearts and blue blood.",
