@@ -328,15 +328,15 @@ def test_whisper_adapter_maps_words_and_loads_the_model_once(tmp_path: Path) -> 
 def test_whisper_prompt_is_vocabulary_not_the_whole_script(tmp_path: Path) -> None:
     model = FakeWhisperModel([])
     stt = WhisperTranscriber("small.en", load=lambda _name: model, decode=lambda _path: "samples")
-    hint = "Bees add an enzyme called glucose oxidase. Honey never spoils."
+    hint = "Bees add an enzyme called glucose oxidase. Honey never spoils, says Simard."
 
     stt.transcribe(tmp_path / "v.wav", language="en", hint=hint)
 
     prompt = model.calls[0]["initial_prompt"]
-    assert "oxidase" in prompt
-    assert "Honey" in prompt
+    assert prompt == "glucose oxidase Simard"  # no commas: whisper copies the prompt's style
     assert "add an" not in prompt  # not the script itself, or whisper would echo it
     assert vocabulary("a " * 2000) == ""  # common words never enter the prompt
+    assert len(vocabulary("photosynthesis " * 0 + " ".join(f"Word{i}x" for i in range(400)))) <= 600
 
 
 def test_whisper_failure_while_decoding_is_transient(tmp_path: Path) -> None:

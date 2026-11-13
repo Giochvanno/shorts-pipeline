@@ -7,6 +7,9 @@ compared, so the "voice matches script" check does not fail on a number.
     spoken_tokens("243 Earth-days, 50%!")
     -> ["two", "hundred", "forty", "three", "earth", "days", "fifty", "percent"]
 
+`vocabulary_words` picks the words speech recognition may misspell, for its
+prompt and for telling a real but unsure word from an echo of that prompt.
+
 Covered: integers (with thousands commas), decimals, percentages, ordinals
 ("21st"), hyphens, case, punctuation. Not covered: years read in pairs
 ("1984" as "nineteen eighty-four"), currencies, Roman numerals; if a script
@@ -120,3 +123,25 @@ def spoken_tokens(text: str) -> list[str]:
         if cleaned:
             tokens.append(cleaned)
     return tokens
+
+
+_SENTENCE_END = (".", "!", "?", '."', '!"', '?"')
+
+
+def vocabulary_words(text: str) -> list[str]:
+    """Words recognition may misspell: long words and names (capitalised mid-sentence).
+
+    Words that are capitalised only because they start a sentence ("The", "On",
+    "Not") are left out. Seen live (videos 5-8): with them in a comma-separated
+    prompt, whisper wrote most words with a trailing comma and was unsure of
+    exactly those sentence starters, so correct words failed the voice check.
+    """
+    seen: dict[str, None] = {}
+    sentence_start = True
+    for raw in text.split():
+        word = re.sub(r"[^\w'-]", "", raw)
+        name = word[:1].isupper() and len(word) > 1 and not sentence_start
+        if len(word) >= 7 or name:
+            seen.setdefault(word, None)
+        sentence_start = raw.endswith(_SENTENCE_END)
+    return list(seen)

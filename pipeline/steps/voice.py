@@ -3,8 +3,9 @@
 1. Synthesize (TTS port). Cached by text and voice settings: a rerun never pays twice.
 2. Listen (STT port: whisper for a real voice, the beep counter for the fake one)
    and compare with the script in spoken form ("243" == "two hundred forty-three").
-   Below `qa.voice_min_match` the take is thrown away and a new one is made, at
-   most `qa.voice_max_redos` times; then the step fails and the runner alerts.
+   Below `qa.voice_min_match` the take is set aside (rejected_voice/, to listen to)
+   and a new one is made, at most `qa.voice_max_redos` times; then the step fails,
+   naming the words that were missed, and the runner alerts.
 3. Keep, tied to this exact voice file, what was heard (voice_transcript.json) and
    the provider's per-character timings if it reports them (voice_alignment.json).
    Captions take their word timings from one of the two, with no new call.
@@ -15,6 +16,7 @@
 
 import difflib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,16 +32,18 @@ from pipeline.artifacts import (
 )
 from pipeline.steps import script as script_step
 from pipeline.steps.base import StepContext, StepError, StepResult
-from pipeline.text import spoken_tokens
+from pipeline.text import spoken_tokens, vocabulary_words
 
 PLACEHOLDER_VOICE = "CHANGE_ME"
 AUDIO_SUFFIXES = (".mp3", ".wav")
 ALIGNMENT = "voice_alignment.json"
 TRANSCRIPT = "voice_transcript.json"
 
-# Words whisper is unsure about do not count as heard. Seen live: on speech it could
-# not understand, whisper echoed its vocabulary prompt back with p = 0.00-0.34.
+# On speech it could not understand, whisper echoed its vocabulary prompt back with
+# p = 0.00-0.34. So an unsure word counts as heard only if it is not a prompt word:
+# a real but unsure "On" or "fifty" counts, an echoed "oxidase" does not.
 MIN_WORD_PROBABILITY = 0.4
+REJECTED = "rejected_voice"  # rejected takes, kept to listen to; nothing reads them
 NOTICE_DRIFT_S = 0.2  # counted in the report
 DRIFT_S = 0.5  # a word this far off is visibly early or late on screen
 DRIFT_SHARE = 0.15  # more such words than this share -> warning
@@ -86,22 +90,26 @@ def run(ctx: StepContext) -> StepResult:
     from_cache = audio is not None
     takes, cost = 0, 0.0
     rejected: list[str] = []
+    missed: list[str] = []
     while True:
         if audio is None:
             if takes > qa.voice_max_redos:
+                shown = ", ".join(missed[:10]) + (" ..." if len(missed) > 10 else "")
                 raise StepError(
                     f"the voice does not match the script after {takes} takes: whisper heard"
-                    f" {', '.join(rejected)} of the words, {qa.voice_min_match:.0%} needed",
+                    f" {', '.join(rejected)} of the words, {qa.voice_min_match:.0%} needed;"
+                    f" missed in the last take: {shown} (takes kept in {REJECTED}/)",
                     retryable=False,
                 )
             audio, paid = _synthesize(ctx, request, key)
             takes, cost = takes + 1, cost + paid
         heard, listen_cost = _listen(ctx, audio, narration)
         cost += listen_cost
-        match = voice_match(narration, heard)
+        match, missed = compare(narration, heard)
         if match >= qa.voice_min_match:
             break
         rejected.append(f"{match:.0%}")
+        _keep_rejected(ctx.run_dir, audio, heard, match, missed)
         _discard(ctx.run_dir)
         audio = None
 
@@ -191,19 +199,45 @@ def _read_words(path: Path) -> tuple[WordTiming, ...]:
     )
 
 
-def voice_match(script: str, heard: tuple[WordTiming, ...]) -> float:
-    """Share of the script's spoken words found, in order, in what was heard."""
+def compare(script: str, heard: tuple[WordTiming, ...]) -> tuple[float, list[str]]:
+    """(share of the script's spoken words found in order in what was heard, words missed)."""
     expected = spoken_tokens(script)
     if not expected:
-        return 0.0
+        return 0.0, []
+    echo_prone = {token for word in vocabulary_words(script) for token in spoken_tokens(word)}
     got = [
         token
         for w in heard
-        if w.probability is None or w.probability >= MIN_WORD_PROBABILITY
         for token in spoken_tokens(w.word)
+        if w.probability is None or w.probability >= MIN_WORD_PROBABILITY or token not in echo_prone
     ]
-    blocks = difflib.SequenceMatcher(a=expected, b=got, autojunk=False).get_matching_blocks()
-    return sum(b.size for b in blocks) / len(expected)
+    found = [False] * len(expected)
+    for block in difflib.SequenceMatcher(a=expected, b=got, autojunk=False).get_matching_blocks():
+        found[block.a : block.a + block.size] = [True] * block.size
+    missed = [token for token, ok in zip(expected, found, strict=True) if not ok]
+    return sum(found) / len(expected), missed
+
+
+def voice_match(script: str, heard: tuple[WordTiming, ...]) -> float:
+    return compare(script, heard)[0]
+
+
+def _keep_rejected(
+    run_dir: Path, audio: Path, heard: tuple[WordTiming, ...], match: float, missed: list[str]
+) -> None:
+    """Copy a rejected take aside, so a human can hear whether the voice or whisper was wrong."""
+    folder = run_dir / REJECTED
+    folder.mkdir(exist_ok=True)
+    number = len(list(folder.glob("take*.json"))) + 1
+    shutil.copyfile(audio, folder / f"take{number}{audio.suffix}")
+    report = {
+        "match": round(match, 3),
+        "missed": missed,
+        "heard": [[w.word, w.start, w.end, w.probability] for w in heard],
+    }
+    (folder / f"take{number}.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
 
 
 def alignment_words(timings: Alignment) -> tuple[WordTiming, ...]:

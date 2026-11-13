@@ -16,7 +16,6 @@
 API checked against faster-whisper 1.2.1.
 """
 
-import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,6 +23,7 @@ from typing import Any, Protocol
 from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.stt.base import Transcript, WordTiming
 from pipeline.media import MediaError, decode_pcm16
+from pipeline.text import vocabulary_words
 
 PROVIDER = "faster_whisper"
 SAMPLE_RATE = 16_000  # what whisper models expect
@@ -62,13 +62,18 @@ def load_faster_whisper(name: str) -> WhisperModelLike:
 
 
 def vocabulary(text: str) -> str:
-    """Rare-looking words (capitalised or long), as a hint for spelling, not as a script."""
-    seen: dict[str, None] = {}
-    for raw in text.split():
-        word = re.sub(r"[^\w'-]", "", raw)
-        if len(word) >= 7 or (word[:1].isupper() and len(word) > 1):
-            seen.setdefault(word, None)
-    return ", ".join(seen)[:_MAX_PROMPT_CHARS]
+    """Rare words of the script as whisper's prompt: a spelling hint, not the script.
+
+    Space-separated on purpose: whisper copies the style of its prompt, and a
+    comma-separated list made it put a comma after nearly every word it heard.
+    """
+    prompt = ""
+    for word in vocabulary_words(text):
+        candidate = f"{prompt} {word}".strip()
+        if len(candidate) > _MAX_PROMPT_CHARS:
+            break
+        prompt = candidate
+    return prompt
 
 
 class WhisperTranscriber:

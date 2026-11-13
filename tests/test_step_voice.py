@@ -13,6 +13,7 @@ from pipeline.artifacts import meta_path
 from pipeline.steps import script, voice
 from pipeline.steps.base import StepContext, StepError
 from pipeline.testing import TimedFakeTts
+from pipeline.text import spoken_tokens
 
 
 def test_writes_audio_matching_series_length(ctx: StepContext) -> None:
@@ -159,6 +160,9 @@ def test_timings_from_another_voice_are_ignored(real_voice: StepContext) -> None
     assert voice.alignment(ctx.run_dir) is None
 
 
+FIXTURES = Path(__file__).parent / "fixtures" / "whisper"
+
+
 # --- the voice check: listen, compare, redo --------------------------------------------
 
 
@@ -182,8 +186,12 @@ def test_voice_that_never_matches_fails_after_the_allowed_redos(ctx: StepContext
         voice.run(replace(ctx, tts=tts, stt=HearsWrongWords()))
 
     assert not exc.value.retryable  # the runner stops and alerts
+    first_words = ", ".join(spoken_tokens(script.load(ctx.run_dir).narration)[:3])
+    assert f"missed in the last take: {first_words}" in str(exc.value)  # names the words
     assert len(tts.calls) == 1 + ctx.series.qa.voice_max_redos
     assert list(ctx.run_dir.glob("voice.*")) == []  # a rejected take is never cached
+    kept = sorted(p.name for p in (ctx.run_dir / voice.REJECTED).iterdir())
+    assert kept == [f"take{n}.{ext}" for n in (1, 2, 3) for ext in ("json", "wav")]
 
 
 def test_a_bad_take_is_redone_and_the_good_one_kept(ctx: StepContext) -> None:
@@ -218,10 +226,36 @@ def test_numbers_in_the_script_match_numbers_said_as_words() -> None:
     assert voice.voice_match("A full spin takes 243 Earth days.", heard) == 1.0
 
 
-def test_unsure_words_do_not_count_as_heard() -> None:
-    heard = (WordTiming("honey", 0, 0.3, 0.9), WordTiming("never", 0.3, 0.6, 0.1))
+def test_unsure_common_words_count_but_unsure_prompt_words_do_not() -> None:
+    # "On" and "fifty" were heard right but unsure (videos 7, 8); "oxidase" is a prompt word,
+    # the kind whisper echoes when it cannot understand the speech.
+    script = "On hot days glucose oxidase works. Fifty more."
+    heard = tuple(
+        WordTiming(w, 0.0, 0.0, p)
+        for w, p in [("On", 0.01), ("hot", 0.9), ("days", 0.9), ("glucose", 0.9),
+                     ("oxidase", 0.2), ("works", 0.9), ("Fifty", 0.08), ("more", 0.9)]
+    )  # fmt: skip
 
-    assert voice.voice_match("Honey never", heard) == 0.5
+    match, missed = voice.compare(script, heard)
+
+    assert missed == ["oxidase"]
+    assert match == pytest.approx(7 / 8)
+
+
+def test_an_echo_of_the_prompt_is_not_a_match() -> None:
+    script = "Bees add an enzyme called glucose oxidase to the nectar they bring back home."
+    echo = tuple(WordTiming(w, 0.0, 0.0, 0.1) for w in ["glucose", "oxidase"])
+
+    assert voice.voice_match(script, echo) == 0.0
+
+
+@pytest.mark.parametrize(("video", "expected"), [(7, 66 / 67), (8, 1.0)])
+def test_real_checks_pass_with_the_new_rule(video: int, expected: float) -> None:
+    # Failed takes in videos 5 and 6 sat at 90-94 % for the same reason.
+    data = json.loads((FIXTURES / f"video{video}.json").read_text(encoding="utf-8"))
+    heard = tuple(WordTiming(*w) for w in data["heard"])
+
+    assert voice.voice_match(data["script"], heard) == pytest.approx(expected)
 
 
 # --- voice clock vs whisper clock -------------------------------------------------------
