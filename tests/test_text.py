@@ -2,7 +2,7 @@
 
 import pytest
 
-from pipeline.text import number_words, spoken_tokens
+from pipeline.text import number_words, spoken_tokens, vocabulary_words
 
 
 @pytest.mark.parametrize(
@@ -51,3 +51,16 @@ def test_whisper_writing_digits_also_compares_equal() -> None:
 )
 def test_spoken_tokens(text: str, tokens: list[str]) -> None:
     assert spoken_tokens(text) == tokens
+
+
+def test_vocabulary_is_long_words_and_names_not_sentence_starters() -> None:
+    text = "The tower grows. On hot days the Eiffel Tower expands. Not much. Ask Simard."
+
+    assert vocabulary_words(text) == ["Eiffel", "Tower", "expands", "Simard"]
+
+
+def test_vocabulary_lists_each_word_once() -> None:
+    assert vocabulary_words("Bees love glucose. Honey has glucose and Bees.") == [
+        "glucose",
+        "Bees",
+    ]
