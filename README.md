@@ -46,11 +46,15 @@ uv run python -m pipeline resume --video 1                       # continue a fa
 uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
 uv sync --extra stt                                              # once: faster-whisper for captions
 uv run python -m pipeline run --series fact-of-day --real stt    # real word timings (local, $0)
+uv run python -m pipeline run --series fact-of-day --real tts    # real voice (ElevenLabs, credits)
 uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
 
 FFmpeg must be in PATH for the render step and its tests (`ffmpeg -version`).
+
+Keys for paid providers go into `.env` in the repo root (git ignores it), one per line:
+`ELEVENLABS_API_KEY=...`. Variables already set in the shell win over the file.
 
 ## Checks (same as CI)
 
@@ -76,8 +80,11 @@ pipeline/            core library
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
                      captions: script words + speech timings, aligned with a diff
+  env.py             reads secrets from .env (no dependency)
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
+                     http.py: stdlib HTTP behind a swappable transport (fake in tests)
                      llm/claude_cli.py: Claude via `claude -p` on the subscription
+                     tts/elevenlabs.py: voice + per-character timings, cost from credits
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

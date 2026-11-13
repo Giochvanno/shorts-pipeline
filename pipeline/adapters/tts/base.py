@@ -16,6 +16,19 @@ class TtsRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class Alignment:
+    """When each character of the text is spoken, from providers that report it.
+
+    Free with the audio (ElevenLabs `with-timestamps`); getting it later would
+    mean paying for the voice again, so the voice step keeps it.
+    """
+
+    characters: tuple[str, ...]
+    starts_s: tuple[float, ...]
+    ends_s: tuple[float, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TtsResult:
     audio: bytes
     format: AudioFormat
@@ -24,6 +37,7 @@ class TtsResult:
     provider: str
     model: str
     cost_usd: float
+    alignment: Alignment | None = None  # None: the provider gives no timings (fake, ...)
 
 
 class TtsClient(Protocol):

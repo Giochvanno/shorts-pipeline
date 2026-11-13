@@ -5,6 +5,7 @@ is a config change, not a code change in the steps. Each port is fake or real
 on its own, so real providers are switched on one at a time.
 """
 
+import os
 import time
 from dataclasses import dataclass
 
@@ -18,8 +19,9 @@ from pipeline.adapters.stt import Transcriber
 from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsClient
+from pipeline.adapters.tts.elevenlabs import API_KEY_ENV, ElevenLabsTts
 from pipeline.adapters.tts.fake import FakeTts
-from pipeline.config import LlmChain, ModeConfig, ModelsConfig
+from pipeline.config import LlmChain, ModeConfig, ModelsConfig, TtsChain
 
 ALL_FAKE = ModeConfig(llm="fake", tts="fake", images="fake", stt="fake")
 
@@ -41,6 +43,16 @@ def _real_llm(chain: LlmChain, models: ModelsConfig) -> LlmClient:
     return ClaudeCliLlm(chain.primary.model, timeout_s=models.llm.timeout_s)
 
 
+def _real_tts(chain: TtsChain) -> TtsClient:
+    # The key is read here, at startup; a missing key fails on the first call, before paying.
+    return ElevenLabsTts(
+        chain.primary.model,
+        api_key=os.environ.get(API_KEY_ENV),
+        usd_per_credit=chain.usd_per_credit,
+        timeout_s=chain.timeout_s,
+    )
+
+
 def build_adapters(
     models: ModelsConfig,
     *,
@@ -51,8 +63,6 @@ def build_adapters(
 ) -> Adapters:
     """`fake=True` forces every port to its fake (tests, demos, `--mode fake`)."""
     mode = ALL_FAKE if fake else mode
-    if mode.tts == "real":
-        raise NotImplementedError("the real TTS adapter (ElevenLabs) is not connected yet")
     if mode.images == "real":
         raise NotImplementedError("the real images adapter (FLUX) is not connected yet")
 
@@ -62,7 +72,7 @@ def build_adapters(
         heavy, light = _real_llm(models.llm.heavy, models), _real_llm(models.llm.light, models)
     else:
         heavy = light = FakeLlm()
-    tts: TtsClient = FakeTts()
+    tts: TtsClient = _real_tts(models.tts) if mode.tts == "real" else FakeTts()
     images: ImageClient = FakeImages()
     stt: Transcriber = (
         WhisperTranscriber(models.stt.primary.model) if mode.stt == "real" else FakeTranscriber()
@@ -71,6 +81,7 @@ def build_adapters(
     if chaos is not None:  # chaos only ever wraps fakes
         if mode.llm == "fake":
             heavy = light = ChaosLlm(heavy, chaos, sleep)
-        tts = ChaosTts(tts, chaos, sleep)
+        if mode.tts == "fake":
+            tts = ChaosTts(tts, chaos, sleep)
         images = ChaosImages(images, chaos, sleep)
     return Adapters(llm_heavy=heavy, llm_light=light, tts=tts, images=images, stt=stt)

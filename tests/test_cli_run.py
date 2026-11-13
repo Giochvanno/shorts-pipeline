@@ -46,14 +46,27 @@ def test_run_takes_the_next_unused_topic(tmp_path: Path) -> None:
 
 
 def test_ports_without_a_real_adapter_are_refused(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    code = main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--real", "tts"])
+    monkeypatch.chdir(tmp_path)  # no .env here: never read real keys in tests
+    code = main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--real", "images"])
 
     assert code == 2
     assert "not connected yet" in capsys.readouterr().err
     with StateStore(tmp_path / DB_NAME) as store:
         assert store.videos() == []  # nothing was created
+
+
+def test_real_voice_without_real_timings_is_refused_before_anything_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    code = main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--real", "tts"])
+
+    assert code == 2
+    assert "--real stt" in capsys.readouterr().err
+    with StateStore(tmp_path / DB_NAME) as store:
+        assert store.videos() == []
 
 
 def test_chaos_is_refused_with_real_ports(
