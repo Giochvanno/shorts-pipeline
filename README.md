@@ -46,6 +46,7 @@ uv run python -m pipeline resume --video 1                       # continue a fa
 uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
 uv sync --extra stt                                              # once: faster-whisper (voice check)
 uv run python -m pipeline run --series fact-of-day --real tts --real stt   # real voice, checked
+uv run python -m pipeline recheck --video 6     # re-run the voice check on kept takes (free)
 uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
@@ -80,7 +81,9 @@ pipeline/            core library
   steps/             idea, script, voice, visuals, captions, render, qa, publish
                      voice: synthesized, then checked by listening (whisper), redone if wrong
                      captions: script words + provider (or whisper) timings, aligned with a diff
-  text.py            spoken form for comparing ("243" == "two hundred forty-three")
+  text.py            spoken form for comparing ("243" == "two hundred forty-three", "85 %")
+  voice_check.py     did the voice say the script: compare, then re-listen to missed
+                     stretches with guards against whisper echoing its prompt
   env.py             reads secrets from .env (no dependency)
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
                      http.py: stdlib HTTP behind a swappable transport (fake in tests)

@@ -7,13 +7,17 @@ compared, so the "voice matches script" check does not fail on a number.
     spoken_tokens("243 Earth-days, 50%!")
     -> ["two", "hundred", "forty", "three", "earth", "days", "fifty", "percent"]
 
+The rules are tables (SYMBOLS, CURRENCIES), each entry tested: a symbol reads the
+same alone ("85 %", as whisper writes it) or glued to a number ("85%"). Also:
+thousands commas, decimals, ordinals ("21st"), "$1.5 million" read as "... million
+dollars", British "-tre" spellings ("centimetres", as whisper writes them).
+
 `vocabulary_words` picks the words speech recognition may misspell, for its
 prompt and for telling a real but unsure word from an echo of that prompt.
 
-Covered: integers (with thousands commas), decimals, percentages, ordinals
-("21st"), hyphens, case, punctuation. Not covered: years read in pairs
-("1984" as "nineteen eighty-four"), currencies, Roman numerals; if a script
-leans on those, the match drops by a word or two, well above the threshold.
+Not covered: years read in pairs ("1984" as "nineteen eighty-four"), Roman
+numerals, units that are also words ("m", "g", "in"); each costs a word or two
+of the match, and the second listen can still find them.
 """
 
 import re
@@ -51,9 +55,34 @@ _ORDINAL_WORDS = {
     "nine": "ninth",
     "twelve": "twelfth",
 }
-_NUMBER = re.compile(r"(\d[\d,]*(?:\.\d+)?)(%|st|nd|rd|th)?")
-_SEPARATORS = re.compile(r"[\s\-\u2010-\u2015/]+")  # spaces, hyphens, dashes, slashes
+# Symbols and abbreviations as said aloud. Keys are lower case; each reads the same
+# alone ("85 %", "3.5 km") or glued to a number ("85%", "3.5km", "50\u00b0F").
+SYMBOLS: dict[str, tuple[str, ...]] = {
+    "%": ("percent",),
+    "&": ("and",),
+    "+": ("plus",),
+    "\u00b0": ("degrees",),
+    "\u00b0f": ("degrees", "fahrenheit"),
+    "\u00b0c": ("degrees", "celsius"),
+    "km": ("kilometers",),
+    "km/h": ("kilometers", "per", "hour"),
+    "mph": ("miles", "per", "hour"),
+    "cm": ("centimeters",),
+    "mm": ("millimeters",),
+    "kg": ("kilograms",),
+    "lb": ("pounds",),
+    "lbs": ("pounds",),
+    "ft": ("feet",),
+}
+# Said after the number: "$20" -> "twenty dollars".
+CURRENCIES: dict[str, str] = {"$": "dollars", "\u20ac": "euros", "\u00a3": "pounds"}
+_SCALE_WORDS = frozenset({"thousand", "million", "billion", "trillion"})
+_ORDINAL_SUFFIXES = frozenset({"st", "nd", "rd", "th"})
+
+_NUMBER = re.compile(r"([$\u20ac\u00a3]?)(\d[\d,]*(?:\.\d+)?)(.*)")
+_PARTS = re.compile(r"[\-\u2010-\u2015/]+")  # hyphens, dashes, slashes inside a word
 _EDGE_PUNCTUATION = '.,!?;:"()[]\u201c\u201d\u2018\u2019\u2026'  # curly quotes, ellipsis
+_BRITISH_TRE = re.compile(r"(?<=[a-z])tre(s?)$")  # centimetre(s) -> centimeter(s)
 
 
 def _below_thousand(n: int) -> list[str]:
@@ -98,31 +127,69 @@ def _ordinal(words: list[str]) -> list[str]:
     return [*words[:-1], last]
 
 
-def _number_token(number: str, suffix: str | None) -> list[str]:
+def _number_words(number: str) -> list[str]:
     whole, _, fraction = number.replace(",", "").partition(".")
     words = number_words(int(whole))
     if fraction:
         words += ["point", *(_ONES[int(d)] for d in fraction)]
-    if suffix == "%":
-        words.append("percent")
-    elif suffix and not fraction:
-        words = _ordinal(words)
     return words
 
 
-def spoken_tokens(text: str) -> list[str]:
-    """Lower-case words with numbers spelled out and punctuation dropped."""
-    tokens: list[str] = []
-    for raw in re.split(_SEPARATORS, text.lower()):
-        word = raw.strip(_EDGE_PUNCTUATION)
-        match = _NUMBER.fullmatch(word)
-        if match:
-            tokens += _number_token(match.group(1), match.group(2))
+def _clean(word: str) -> str:
+    cleaned = re.sub(r"[^\w']", "", word.replace("\u2019", "'")).strip("'")
+    return _BRITISH_TRE.sub(r"ter\1", cleaned)
+
+
+def _part_tokens(part: str) -> list[str] | None:
+    """Tokens of a number-like part ("$20", "85%", "3.5km", "21st"), or None if not one."""
+    match = _NUMBER.fullmatch(part)
+    if not match:
+        return None
+    currency, number, suffix = match.groups()
+    words = _number_words(number)
+    if suffix in SYMBOLS:
+        words += SYMBOLS[suffix]
+    elif suffix in _ORDINAL_SUFFIXES and "." not in number:
+        words = _ordinal(words)
+    elif suffix:
+        return None  # "1990s", "3d": a word with digits, compared as written
+    if currency:
+        words.append(CURRENCIES[currency])
+    return words
+
+
+def spoken_words(text: str) -> list[tuple[str, int]]:
+    """(token, index of the whitespace-separated word it came from), in spoken order.
+
+    The index lets a missed token be found in time again (per-word timings).
+    """
+    words = [raw.lower().strip(_EDGE_PUNCTUATION) for raw in text.split()]
+    out: list[tuple[str, int]] = []
+    skip = -1
+    for i, word in enumerate(words):
+        if i == skip:
             continue
-        cleaned = re.sub(r"[^\w']", "", word.replace("\u2019", "'")).strip("'")
-        if cleaned:
-            tokens.append(cleaned)
-    return tokens
+        if word in SYMBOLS:
+            out += [(token, i) for token in SYMBOLS[word]]
+            continue
+        for part in _PARTS.split(word):
+            part = part.strip(_EDGE_PUNCTUATION)
+            tokens = _part_tokens(part)
+            if tokens is None:
+                cleaned = _clean(part)
+                out += [(cleaned, i)] if cleaned else []
+                continue
+            scaled = i + 1 < len(words) and words[i + 1] in _SCALE_WORDS
+            if part[:1] in CURRENCIES and scaled:  # "$1.5 million" -> "... million dollars"
+                tokens.insert(-1, words[i + 1])
+                skip = i + 1
+            out += [(token, i) for token in tokens]
+    return out
+
+
+def spoken_tokens(text: str) -> list[str]:
+    """Lower-case words with numbers and symbols spelled out, punctuation dropped."""
+    return [token for token, _ in spoken_words(text)]
 
 
 _SENTENCE_END = (".", "!", "?", '."', '!"', '?"')

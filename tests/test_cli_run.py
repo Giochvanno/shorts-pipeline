@@ -89,3 +89,29 @@ def test_resume_of_unknown_video_is_a_clear_error(
 def test_status_with_no_videos(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["status", "--runs-dir", str(tmp_path)]) == 0
     assert "no videos yet" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("ffmpeg")
+def test_recheck_command_reports_each_take(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert (
+        main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--mode", "fake"]) == 0
+    )
+    capsys.readouterr()
+
+    code = main(["recheck", "--video", "1", "--runs-dir", str(tmp_path), "--stt", "fake"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "(needs 95%)" in out
+    assert "voice.wav" in out and "100.0%" in out and "PASS" in out
+
+
+def test_recheck_of_an_unknown_video_is_an_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = main(["recheck", "--video", "42", "--runs-dir", str(tmp_path), "--stt", "fake"])
+
+    assert code == 2
+    assert "42" in capsys.readouterr().err

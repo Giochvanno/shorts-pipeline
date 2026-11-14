@@ -52,10 +52,12 @@ class FakeTranscriber:
     def model(self) -> str:
         return self._model
 
-    def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
+    def transcribe(
+        self, audio: Path, *, language: str, hint: str | None = None, expect: str | None = None
+    ) -> Transcript:
         self.calls.append(audio)
         beeps, duration = find_beeps(audio)
-        expected = (hint or "").split()
+        expected = (expect or hint or "").split()
         words = tuple(
             WordTiming(
                 word=expected[i] if i < len(expected) else f"word{i + 1}",
@@ -66,5 +68,9 @@ class FakeTranscriber:
             for i, (start, end) in enumerate(beeps)
         )
         return Transcript(
-            words=words, duration_s=duration, provider=self.provider, model=self.model
+            words=words,
+            duration_s=duration,
+            provider=self.provider,
+            model=self.model,
+            no_speech_prob=0.0 if words else 1.0,
         )

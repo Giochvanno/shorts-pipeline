@@ -210,9 +210,11 @@ class MeteredTranscriber:
     def model(self) -> str:
         return self.inner.model
 
-    def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
+    def transcribe(
+        self, audio: Path, *, language: str, hint: str | None = None, expect: str | None = None
+    ) -> Transcript:
         self._ledger.check()
-        result = self.inner.transcribe(audio, language=language, hint=hint)
+        result = self.inner.transcribe(audio, language=language, hint=hint, expect=expect)
         self._ledger.record(
             provider=result.provider,
             model=result.model,

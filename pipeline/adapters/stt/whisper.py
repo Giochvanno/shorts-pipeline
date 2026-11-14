@@ -97,7 +97,9 @@ class WhisperTranscriber:
     def model(self) -> str:
         return self._model_name
 
-    def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
+    def transcribe(
+        self, audio: Path, *, language: str, hint: str | None = None, expect: str | None = None
+    ) -> Transcript:
         if self._loaded is None:
             self._loaded = self._load(self._model_name)
         samples = self._decode(audio)
@@ -106,12 +108,13 @@ class WhisperTranscriber:
                 samples,
                 language=language,
                 word_timestamps=True,
-                initial_prompt=vocabulary(hint) if hint else None,
+                initial_prompt=expect or (vocabulary(hint) if hint else None),
                 condition_on_previous_text=False,  # avoids repetition loops
                 vad_filter=False,  # keep word times relative to the original audio
                 beam_size=5,
             )
             # Segments are a generator: decoding happens while iterating.
+            decoded = list(segments)
             words = tuple(
                 WordTiming(
                     word=w.word.strip(),
@@ -119,9 +122,13 @@ class WhisperTranscriber:
                     end=float(w.end),
                     probability=float(w.probability),
                 )
-                for segment in segments
+                for segment in decoded
                 for w in (segment.words or [])
                 if w.word.strip()
+            )
+            no_speech = max(
+                (float(getattr(segment, "no_speech_prob", 0.0)) for segment in decoded),
+                default=1.0,
             )
         except (PermanentAdapterError, TransientAdapterError):
             raise
@@ -132,4 +139,5 @@ class WhisperTranscriber:
             duration_s=float(info.duration),
             provider=PROVIDER,
             model=self._model_name,
+            no_speech_prob=no_speech,
         )

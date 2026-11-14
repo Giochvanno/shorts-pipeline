@@ -1,26 +1,23 @@
 """Step `voice`: script narration -> runs/<id>/voice.<mp3|wav>, checked by listening to it.
 
 1. Synthesize (TTS port). Cached by text and voice settings: a rerun never pays twice.
-2. Listen (STT port: whisper for a real voice, the beep counter for the fake one)
-   and compare with the script in spoken form ("243" == "two hundred forty-three").
-   Below `qa.voice_min_match` the take is set aside (rejected_voice/, to listen to)
-   and a new one is made, at most `qa.voice_max_redos` times; then the step fails,
-   naming the words that were missed, and the runner alerts.
+2. Check it (pipeline.voice_check): whisper hears the whole take, the result is
+   compared with the script in spoken form, and missed stretches are heard again
+   on their own, with guards, before a take is blamed. Below `qa.voice_min_match`
+   the take is set aside (rejected_voice/, to listen to) and a new one is made, at
+   most `qa.voice_max_redos` times; then the step fails, naming the missed words.
 3. Keep, tied to this exact voice file, what was heard (voice_transcript.json) and
    the provider's per-character timings if it reports them (voice_alignment.json).
    Captions take their word timings from one of the two, with no new call.
-4. Compare the provider's word starts with whisper's. If more than DRIFT_SHARE of
-   the words differ by more than DRIFT_S, the video report gets a warning: one of
-   the two clocks is off, and captions may be too.
+4. Compare the provider's word starts with whisper's: if many differ by more than
+   DRIFT_S, the video report gets a warning (one of the two clocks is off).
 """
 
-import difflib
 import json
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 
-from pipeline.adapters.stt import WordTiming
+from pipeline.adapters.stt import Transcriber, WordTiming
 from pipeline.adapters.tts import Alignment, TtsRequest
 from pipeline.artifacts import (
     file_hash,
@@ -30,37 +27,29 @@ from pipeline.artifacts import (
     read_meta,
     write_output,
 )
+from pipeline.config import SeriesConfig
+from pipeline.media import probe
 from pipeline.steps import script as script_step
 from pipeline.steps.base import StepContext, StepError, StepResult
-from pipeline.text import spoken_tokens, vocabulary_words
+from pipeline.voice_check import (
+    DRIFT_S,
+    DRIFT_SHARE,
+    MIN_WORD_PROBABILITY,
+    NOTICE_DRIFT_S,
+    VoiceCheck,
+    check,
+    compare,
+    timing_drift,
+)
+
+__all__ = ["MIN_WORD_PROBABILITY", "compare", "timing_drift"]  # re-exported for callers
 
 PLACEHOLDER_VOICE = "CHANGE_ME"
 AUDIO_SUFFIXES = (".mp3", ".wav")
 ALIGNMENT = "voice_alignment.json"
 TRANSCRIPT = "voice_transcript.json"
 
-# On speech it could not understand, whisper echoed its vocabulary prompt back with
-# p = 0.00-0.34. So an unsure word counts as heard only if it is not a prompt word:
-# a real but unsure "On" or "fifty" counts, an echoed "oxidase" does not.
-MIN_WORD_PROBABILITY = 0.4
 REJECTED = "rejected_voice"  # rejected takes, kept to listen to; nothing reads them
-NOTICE_DRIFT_S = 0.2  # counted in the report
-DRIFT_S = 0.5  # a word this far off is visibly early or late on screen
-DRIFT_SHARE = 0.15  # more such words than this share -> warning
-
-
-@dataclass(frozen=True, slots=True)
-class Drift:
-    """How far the provider's word starts are from whisper's."""
-
-    compared: int
-    over_notice: int
-    over_limit: int
-    worst_s: float
-
-    @property
-    def too_much(self) -> bool:
-        return self.compared > 0 and self.over_limit / self.compared > DRIFT_SHARE
 
 
 def run(ctx: StepContext) -> StepResult:
@@ -90,10 +79,12 @@ def run(ctx: StepContext) -> StepResult:
     from_cache = audio is not None
     takes, cost = 0, 0.0
     rejected: list[str] = []
-    missed: list[str] = []
+    result: VoiceCheck | None = None
     while True:
         if audio is None:
             if takes > qa.voice_max_redos:
+                assert result is not None
+                missed = list(result.missed)
                 shown = ", ".join(missed[:10]) + (" ..." if len(missed) > 10 else "")
                 raise StepError(
                     f"the voice does not match the script after {takes} takes: whisper heard"
@@ -105,16 +96,44 @@ def run(ctx: StepContext) -> StepResult:
             takes, cost = takes + 1, cost + paid
         heard, listen_cost = _listen(ctx, audio, narration)
         cost += listen_cost
-        match, missed = compare(narration, heard)
-        if match >= qa.voice_min_match:
+        timings = alignment(ctx.run_dir)
+        result = check(
+            ctx.stt,
+            audio,
+            narration,
+            heard,
+            alignment_words(timings) if timings is not None else None,
+            language=ctx.language,
+            duration_s=voice_file(ctx.run_dir)[1],
+            min_match=qa.voice_min_match,
+            max_missed=qa.voice_relisten_max_missed,
+        )
+        if result.match >= qa.voice_min_match:
             break
-        rejected.append(f"{match:.0%}")
-        _keep_rejected(ctx.run_dir, audio, heard, match, missed)
+        rejected.append(f"{result.match:.0%}")
+        _keep_rejected(ctx, audio, heard, result)
         _discard(ctx.run_dir)
         audio = None
 
-    notes = [f"whisper heard {match:.1%} of the script" + (f" (take {takes})" if takes > 1 else "")]
-    timings = alignment(ctx.run_dir)
+    return StepResult(
+        outputs=(audio,),
+        cost_usd=cost,
+        cached=from_cache and takes == 0,
+        notes=_notes(result, takes, heard, alignment(ctx.run_dir)),
+    )
+
+
+def _notes(
+    result: VoiceCheck, takes: int, heard: tuple[WordTiming, ...], timings: Alignment | None
+) -> tuple[str, ...]:
+    take = f" (take {takes})" if takes > 1 else ""
+    if result.rescued:
+        notes = [
+            f"whisper heard {result.first_match:.1%} of the script; the second listen found"
+            f" {len(result.rescued)} more ({', '.join(result.rescued)}): {result.match:.1%}{take}"
+        ]
+    else:
+        notes = [f"whisper heard {result.match:.1%} of the script{take}"]
     if timings is not None:
         drift = timing_drift(alignment_words(timings), heard)
         notes.append(
@@ -126,9 +145,7 @@ def run(ctx: StepContext) -> StepResult:
                 f"warning: over {DRIFT_SHARE:.0%} of word starts differ by > {DRIFT_S} s"
                 " between the voice provider and whisper: check the captions"
             )
-    return StepResult(
-        outputs=(audio,), cost_usd=cost, cached=from_cache and takes == 0, notes=tuple(notes)
-    )
+    return tuple(notes)
 
 
 def _synthesize(ctx: StepContext, request: TtsRequest, key: str) -> tuple[Path, float]:
@@ -199,47 +216,6 @@ def _read_words(path: Path) -> tuple[WordTiming, ...]:
     )
 
 
-def compare(script: str, heard: tuple[WordTiming, ...]) -> tuple[float, list[str]]:
-    """(share of the script's spoken words found in order in what was heard, words missed)."""
-    expected = spoken_tokens(script)
-    if not expected:
-        return 0.0, []
-    echo_prone = {token for word in vocabulary_words(script) for token in spoken_tokens(word)}
-    got = [
-        token
-        for w in heard
-        for token in spoken_tokens(w.word)
-        if w.probability is None or w.probability >= MIN_WORD_PROBABILITY or token not in echo_prone
-    ]
-    found = [False] * len(expected)
-    for block in difflib.SequenceMatcher(a=expected, b=got, autojunk=False).get_matching_blocks():
-        found[block.a : block.a + block.size] = [True] * block.size
-    missed = [token for token, ok in zip(expected, found, strict=True) if not ok]
-    return sum(found) / len(expected), missed
-
-
-def voice_match(script: str, heard: tuple[WordTiming, ...]) -> float:
-    return compare(script, heard)[0]
-
-
-def _keep_rejected(
-    run_dir: Path, audio: Path, heard: tuple[WordTiming, ...], match: float, missed: list[str]
-) -> None:
-    """Copy a rejected take aside, so a human can hear whether the voice or whisper was wrong."""
-    folder = run_dir / REJECTED
-    folder.mkdir(exist_ok=True)
-    number = len(list(folder.glob("take*.json"))) + 1
-    shutil.copyfile(audio, folder / f"take{number}{audio.suffix}")
-    report = {
-        "match": round(match, 3),
-        "missed": missed,
-        "heard": [[w.word, w.start, w.end, w.probability] for w in heard],
-    }
-    (folder / f"take{number}.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
-    )
-
-
 def alignment_words(timings: Alignment) -> tuple[WordTiming, ...]:
     """Per-character timings grouped into words: a word spans its first to last character."""
     words: list[WordTiming] = []
@@ -260,22 +236,55 @@ def alignment_words(timings: Alignment) -> tuple[WordTiming, ...]:
     return tuple(words)
 
 
-def timing_drift(voice: tuple[WordTiming, ...], heard: tuple[WordTiming, ...]) -> Drift:
-    """Start differences for the words both sides agree on."""
-    sure = [w for w in heard if w.probability is None or w.probability >= MIN_WORD_PROBABILITY]
-    a = [" ".join(spoken_tokens(w.word)) for w in voice]
-    b = [" ".join(spoken_tokens(w.word)) for w in sure]
-    diffs = [
-        abs(sure[block.b + k].start - voice[block.a + k].start)
-        for block in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_matching_blocks()
-        for k in range(block.size)
-    ]
-    return Drift(
-        compared=len(diffs),
-        over_notice=sum(d > NOTICE_DRIFT_S for d in diffs),
-        over_limit=sum(d > DRIFT_S for d in diffs),
-        worst_s=max(diffs, default=0.0),
+def voice_match(script: str, heard: tuple[WordTiming, ...]) -> float:
+    """Share of the script heard in order, before any second listen."""
+    return compare(script, heard).match
+
+
+def _keep_rejected(
+    ctx: StepContext, audio: Path, heard: tuple[WordTiming, ...], result: VoiceCheck
+) -> None:
+    """Copy a rejected take aside, so a human can hear whether the voice or whisper was wrong.
+
+    Kept inside the video's run folder (git ignores runs/), so it goes with the video.
+    The folder is capped at `qa.rejected_takes_max_mb`: the oldest takes go first,
+    the newest always stays.
+    """
+    folder = ctx.run_dir / REJECTED
+    folder.mkdir(exist_ok=True)
+    numbers = [int(p.stem[4:]) for p in folder.glob("take*.json") if p.stem[4:].isdigit()]
+    number = max(numbers, default=0) + 1
+    shutil.copyfile(audio, folder / f"take{number}{audio.suffix}")
+    timings = ctx.run_dir / ALIGNMENT
+    if timings.exists():
+        shutil.copyfile(timings, folder / f"take{number}.alignment.json")
+    report = {
+        "match": round(result.match, 3),
+        "first_match": round(result.first_match, 3),
+        "missed": list(result.missed),
+        "rescued": list(result.rescued),
+        "heard": [[w.word, w.start, w.end, w.probability] for w in heard],
+    }
+    (folder / f"take{number}.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
     )
+    _cap(folder, int(ctx.series.qa.rejected_takes_max_mb * 1024 * 1024))
+
+
+def _cap(folder: Path, max_bytes: int) -> None:
+    def take_of(path: Path) -> int:
+        digits = path.name[4:].split(".")[0]
+        return int(digits) if digits.isdigit() else 0
+
+    files = sorted(folder.glob("take*"), key=take_of)
+    total = sum(p.stat().st_size for p in files)
+    # The newest take always stays: it is the one a human will want to hear.
+    while len({take_of(p) for p in files}) > 1 and total > max_bytes:
+        oldest = take_of(files[0])
+        for path in [p for p in files if take_of(p) == oldest]:
+            total -= path.stat().st_size
+            path.unlink()
+            files.remove(path)
 
 
 def _audio_files(run_dir: Path) -> list[Path]:
@@ -311,12 +320,50 @@ def alignment(run_dir: Path) -> Alignment | None:
         return None
     if meta.get("input_hash") != voice_meta.get("input_hash"):
         return None
+    return read_alignment(path)
+
+
+def read_alignment(path: Path) -> Alignment:
     data = json.loads(path.read_text(encoding="utf-8"))
     return Alignment(
         characters=tuple(data["characters"]),
         starts_s=tuple(float(x) for x in data["starts_s"]),
         ends_s=tuple(float(x) for x in data["ends_s"]),
     )
+
+
+def recheck(
+    run_dir: Path, series: SeriesConfig, stt: Transcriber, language: str
+) -> list[tuple[str, VoiceCheck]]:
+    """Run today's voice check on every take kept for a video: rejected ones and the voice.
+
+    Only listens (local, free): nothing is synthesized and nothing in run_dir changes.
+    """
+    narration = script_step.load(run_dir).narration
+    takes: list[tuple[Path, Alignment | None]] = []
+    folder = run_dir / REJECTED
+    for audio in sorted(folder.glob("take*")) if folder.is_dir() else []:
+        if audio.suffix in AUDIO_SUFFIXES:
+            saved = folder / f"{audio.stem}.alignment.json"
+            takes.append((audio, read_alignment(saved) if saved.exists() else None))
+    if _audio_files(run_dir):
+        takes.append((voice_file(run_dir)[0], alignment(run_dir)))
+    results = []
+    for audio, timings in takes:
+        heard = stt.transcribe(audio, language=language, hint=narration).words
+        result = check(
+            stt,
+            audio,
+            narration,
+            heard,
+            alignment_words(timings) if timings is not None else None,
+            language=language,
+            duration_s=probe(audio).duration_s,
+            min_match=series.qa.voice_min_match,
+            max_missed=series.qa.voice_relisten_max_missed,
+        )
+        results.append((audio.relative_to(run_dir).as_posix(), result))
+    return results
 
 
 def transcript(run_dir: Path) -> tuple[WordTiming, ...] | None:

@@ -57,3 +57,5 @@ music:
 qa:
   voice_min_match: 0.95  # whisper must hear this share of the script words, else the voice is redone
   voice_max_redos: 2     # new takes after the first; then the video fails with an alert
+  voice_relisten_max_missed: 0.10  # missed words are heard again only if at most 10 % are missing
+  rejected_takes_max_mb: 20        # rejected takes kept per video to listen to; oldest go first
