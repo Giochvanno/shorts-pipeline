@@ -14,6 +14,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from pipeline.adapters.chaos import ChaosConfig
+from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.notify.console import ConsoleNotifier
 from pipeline.adapters.registry import ALL_FAKE, build_adapters
 from pipeline.config import (
@@ -31,6 +32,8 @@ from pipeline.env import load_env
 from pipeline.logs import get_logger, log_to_file
 from pipeline.runner import RetryPolicy, Runner, VideoReport
 from pipeline.state import StateStore, StepStatus, UnknownVideoError
+from pipeline.steps import voice as voice_step
+from pipeline.steps.base import StepError
 
 DB_NAME = "pipeline.db"
 LOG_NAME = "pipeline.log.jsonl"
@@ -84,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="list videos and where each one stands")
     status.add_argument("--runs-dir", type=Path, default=Path("runs"))
+
+    recheck = sub.add_parser(
+        "recheck", help="run today's voice check on a video's kept takes (listens only, free)"
+    )
+    recheck.add_argument("--video", type=int, required=True)
+    recheck.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    recheck.add_argument("--stt", choices=["real", "fake"], default="real")
     return parser
 
 
@@ -245,6 +255,40 @@ def status_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def recheck_command(args: argparse.Namespace) -> int:
+    try:
+        with StateStore(args.runs_dir / DB_NAME) as store:
+            video = store.video(args.video)
+    except UnknownVideoError as e:
+        print(f"error  {e}", file=sys.stderr)
+        return 2
+    channel = load_channel()
+    series = load_series(video.series_id)
+    stt = build_adapters(channel.models, mode=ALL_FAKE.model_copy(update={"stt": args.stt})).stt
+    run_dir = args.runs_dir / str(video.id)
+    try:
+        results = voice_step.recheck(run_dir, series, stt, channel.channel.language)
+    except (PermanentAdapterError, TransientAdapterError, StepError) as e:
+        print(f"error  {e}", file=sys.stderr)
+        return 2
+    need = series.qa.voice_min_match
+    print(f"video {video.id}  {video.series_id}  {video.topic!r}  (needs {need:.0%})")
+    for name, result in results:
+        verdict = "PASS" if result.match >= need else "FAIL"
+        score = f"{result.first_match:6.1%}"
+        if result.relistened:
+            score += f" -> {result.match:.1%}"
+        line = f"  {name:<28} {score:<18} {verdict}"
+        if result.rescued:
+            line += f"  second listen found: {', '.join(result.rescued)}"
+        elif result.missed and verdict == "FAIL":
+            line += f"  missed: {', '.join(result.missed[:10])}"
+        print(line)
+    if not results:
+        print("  no takes kept for this video")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -254,5 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_command(args)
     if args.command == "status":
         return status_command(args)
+    if args.command == "recheck":
+        return recheck_command(args)
     parser.print_help()
     return 0

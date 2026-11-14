@@ -173,7 +173,9 @@ class HearsWrongWords(FakeTranscriber):
         super().__init__()
         self.bad_takes = bad_takes
 
-    def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
+    def transcribe(
+        self, audio: Path, *, language: str, hint: str | None = None, expect: str | None = None
+    ) -> Transcript:
         good = len(self.calls) >= self.bad_takes
         return super().transcribe(audio, language=language, hint=hint if good else None)
 
@@ -236,10 +238,10 @@ def test_unsure_common_words_count_but_unsure_prompt_words_do_not() -> None:
                      ("oxidase", 0.2), ("works", 0.9), ("Fifty", 0.08), ("more", 0.9)]
     )  # fmt: skip
 
-    match, missed = voice.compare(script, heard)
+    result = voice.compare(script, heard)
 
-    assert missed == ["oxidase"]
-    assert match == pytest.approx(7 / 8)
+    assert result.missed == ["oxidase"]
+    assert result.match == pytest.approx(7 / 8)
 
 
 def test_an_echo_of_the_prompt_is_not_a_match() -> None:
@@ -296,3 +298,82 @@ def test_a_provider_clock_off_by_more_than_the_limit_is_a_warning_not_a_failure(
 
     assert voice.voice_file(ctx.run_dir)[0].exists()
     assert result.notes[-1].startswith("warning: over 15% of word starts differ")
+
+
+# --- second listen inside the step ------------------------------------------------------
+
+
+class SkipsWordsOnce(FakeTranscriber):
+    """Whole-take listen drops the given script words (like whisper on video 6); a clip
+    listen with no prompt hears every beep of the clip as the script words in it."""
+
+    def __init__(self, skip: set[int], script_words: list[str]) -> None:
+        super().__init__()
+        self.skip, self.script_words = skip, script_words
+
+    def transcribe(
+        self, audio: Path, *, language: str, hint: str | None = None, expect: str | None = None
+    ) -> Transcript:
+        full = super().transcribe(audio, language=language, hint=hint, expect=expect)
+        if hint is not None:  # the whole take
+            kept = tuple(w for i, w in enumerate(full.words) if i not in self.skip)
+            return replace(full, words=kept)
+        # A clip: label its beeps with the script words around the skipped ones.
+        first = max(min(self.skip) - 1, 0)
+        names = self.script_words[first : first + len(full.words)]
+        return replace(
+            full, words=tuple(replace(w, word=n) for w, n in zip(full.words, names, strict=True))
+        )
+
+
+@pytest.mark.usefixtures("ffmpeg")
+def test_words_whisper_skipped_are_found_again_and_the_take_kept(
+    real_voice: StepContext,
+) -> None:
+    ctx = real_voice
+    script.run(ctx)
+    words = script.load(ctx.run_dir).narration.split()
+    tts = TimedFakeTts()
+    stt = SkipsWordsOnce({3, 4, 5, 6, 7}, words)  # ~7 % of the script: under the 10 % limit
+
+    result = voice.run(replace(ctx, tts=tts, stt=stt))
+
+    assert len(tts.calls) == 1  # no new take was paid for
+    assert "the second listen found" in result.notes[0]
+    assert result.notes[0].endswith(": 100.0%")
+
+
+@pytest.mark.usefixtures("ffmpeg")
+def test_rejected_takes_keep_their_timings_and_the_folder_is_capped(
+    real_voice: StepContext,
+) -> None:
+    tiny = real_voice.series.qa.model_copy(update={"rejected_takes_max_mb": 0.001})
+    ctx = replace(real_voice, series=real_voice.series.model_copy(update={"qa": tiny}))
+    script.run(ctx)
+
+    with pytest.raises(StepError):
+        voice.run(replace(ctx, tts=TimedFakeTts(), stt=HearsWrongWords()))
+
+    kept = sorted(p.name for p in (ctx.run_dir / voice.REJECTED).iterdir())
+    assert kept == ["take3.alignment.json", "take3.json", "take3.wav"]  # newest only
+    report = json.loads((ctx.run_dir / voice.REJECTED / "take3.json").read_text())
+    assert report["match"] == 0.0
+
+
+@pytest.mark.usefixtures("ffmpeg")
+def test_recheck_listens_to_every_kept_take_and_changes_nothing(real_voice: StepContext) -> None:
+    ctx = real_voice
+    script.run(ctx)
+    with pytest.raises(StepError):
+        voice.run(replace(ctx, tts=TimedFakeTts(), stt=HearsWrongWords()))
+    before = sorted((p.name, p.stat().st_mtime_ns) for p in ctx.run_dir.rglob("*"))
+
+    results = voice.recheck(ctx.run_dir, ctx.series, FakeTranscriber(), "en")
+
+    assert [name for name, _ in results] == [
+        "rejected_voice/take1.wav",
+        "rejected_voice/take2.wav",
+        "rejected_voice/take3.wav",
+    ]
+    assert all(result.match == 1.0 for _, result in results)  # a listener that hears right
+    assert sorted((p.name, p.stat().st_mtime_ns) for p in ctx.run_dir.rglob("*")) == before

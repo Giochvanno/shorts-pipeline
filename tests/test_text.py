@@ -2,7 +2,14 @@
 
 import pytest
 
-from pipeline.text import number_words, spoken_tokens, vocabulary_words
+from pipeline.text import (
+    CURRENCIES,
+    SYMBOLS,
+    number_words,
+    spoken_tokens,
+    spoken_words,
+    vocabulary_words,
+)
 
 
 @pytest.mark.parametrize(
@@ -63,4 +70,60 @@ def test_vocabulary_lists_each_word_once() -> None:
     assert vocabulary_words("Bees love glucose. Honey has glucose and Bees.") == [
         "glucose",
         "Bees",
+    ]
+
+
+# --- the normalization table: every rule, both ways it is written ---------------------
+
+RULES = [
+    # (script or whisper text, spoken tokens)
+    ("85%", "eighty five percent"),
+    ("85 %", "eighty five percent"),  # whisper's way (video 6)
+    ("85 percent", "eighty five percent"),
+    ("salt & pepper", "salt and pepper"),
+    ("5+ years", "five plus years"),
+    ("50\u00b0", "fifty degrees"),
+    ("50 \u00b0F", "fifty degrees fahrenheit"),
+    ("50\u00b0F", "fifty degrees fahrenheit"),
+    ("-40\u00b0C", "forty degrees celsius"),
+    ("3.5 km", "three point five kilometers"),
+    ("3.5km", "three point five kilometers"),
+    ("120 km/h", "one hundred twenty kilometers per hour"),
+    ("60 mph", "sixty miles per hour"),
+    ("15 cm", "fifteen centimeters"),
+    ("15 centimetres", "fifteen centimeters"),  # whisper's British spelling (video 7)
+    ("2 mm", "two millimeters"),
+    ("70kg", "seventy kilograms"),
+    ("5 lbs", "five pounds"),
+    ("1,000 ft", "one thousand feet"),
+    ("$20", "twenty dollars"),
+    ("$1.5 million", "one point five million dollars"),
+    ("\u20ac5", "five euros"),
+    ("\u00a33", "three pounds"),
+    ("1,000", "one thousand"),
+    ("the 1990s", "the 1990s"),  # digits glued to letters stay a word, on both sides
+]
+
+
+@pytest.mark.parametrize(("text", "tokens"), RULES, ids=[text for text, _ in RULES])
+def test_normalization_rule(text: str, tokens: str) -> None:
+    assert spoken_tokens(text) == tokens.split()
+
+
+def test_every_symbol_and_currency_has_a_rule_test() -> None:
+    tested = " ".join(text.lower() for text, _ in RULES)
+    for key in [*SYMBOLS, *CURRENCIES]:
+        assert key in tested, f"no test for {key!r}"
+
+
+def test_tokens_remember_their_script_word() -> None:
+    assert spoken_words("Up to 40% of fine-root carbon") == [
+        ("up", 0),
+        ("to", 1),
+        ("forty", 2),
+        ("percent", 2),
+        ("of", 3),
+        ("fine", 4),
+        ("root", 4),
+        ("carbon", 5),
     ]

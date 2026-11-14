@@ -238,6 +238,9 @@ class CaptionsConfig(_Strict):
 class QaConfig(_Strict):
     voice_min_match: float = Field(ge=0.5, le=1.0)  # share of script words whisper must hear
     voice_max_redos: int = Field(ge=0, le=5)  # new takes before the video fails
+    # Missed stretches are heard again only if at most this share of words is missing.
+    voice_relisten_max_missed: float = Field(ge=0.0, le=0.3)
+    rejected_takes_max_mb: float = Field(ge=0, le=500)  # per video, oldest go first
 
 
 class MusicConfig(_Strict):

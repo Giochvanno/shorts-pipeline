@@ -188,3 +188,13 @@ def test_transcriber_returns_ordered_words_inside_the_audio(
     assert transcript.provider == stt.provider
     assert transcript.model == stt.model
     assert transcript.cost_usd >= 0
+    assert 0 <= transcript.no_speech_prob <= 1
+
+
+def test_transcriber_accepts_expected_words_for_a_clip(stt: Transcriber, tmp_path: Path) -> None:
+    audio = tmp_path / "voice.wav"
+    audio.write_bytes(FakeTts().synthesize(TTS_REQUEST).audio)
+
+    transcript = stt.transcribe(audio, language="en", expect=TTS_REQUEST.text)
+
+    assert 0 <= transcript.no_speech_prob <= 1

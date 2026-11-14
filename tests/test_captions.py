@@ -155,7 +155,9 @@ def test_step_refuses_timings_that_do_not_line_up_with_the_script(voiced: StepCo
     # The voice check normally catches this first; captions keep their own floor for voices
     # made before the check existed (no saved transcript: captions listen themselves).
     class WrongVoice(FakeTranscriber):
-        def transcribe(self, audio: Path, *, language: str, hint: str | None = None) -> Transcript:
+        def transcribe(
+            self, audio: Path, *, language: str, hint: str | None = None, expect: str | None = None
+        ) -> Transcript:
             heard = super().transcribe(audio, language=language, hint=None)  # "word1", "word2"...
             return heard
 
@@ -285,8 +287,13 @@ def test_step_needs_the_voice_first(ctx: StepContext) -> None:
 
 
 class FakeWhisperModel:
-    def __init__(self, words: list[tuple[str, float, float]], fail: Exception | None = None):
-        self.words, self.fail = words, fail
+    def __init__(
+        self,
+        words: list[tuple[str, float, float]],
+        fail: Exception | None = None,
+        no_speech: float = 0.02,
+    ):
+        self.words, self.fail, self.no_speech = words, fail, no_speech
         self.calls: list[dict[str, Any]] = []
 
     def transcribe(self, audio: Any, **kwargs: Any) -> tuple[Any, Any]:
@@ -295,9 +302,12 @@ class FakeWhisperModel:
         def segments() -> Any:
             if self.fail is not None:
                 raise self.fail  # faster-whisper decodes lazily, while iterating
+            if not self.words:
+                return  # whisper found nothing: no segments at all
             yield SimpleNamespace(
                 words=[SimpleNamespace(word=f" {w}", start=s, end=e, probability=0.9)
-                       for w, s, e in self.words]
+                       for w, s, e in self.words],
+                no_speech_prob=self.no_speech,
             )  # fmt: skip
 
         return segments(), SimpleNamespace(duration=2.5)
@@ -337,6 +347,29 @@ def test_whisper_prompt_is_vocabulary_not_the_whole_script(tmp_path: Path) -> No
     assert "add an" not in prompt  # not the script itself, or whisper would echo it
     assert vocabulary("a " * 2000) == ""  # common words never enter the prompt
     assert len(vocabulary("photosynthesis " * 0 + " ".join(f"Word{i}x" for i in range(400)))) <= 600
+
+
+def test_whisper_gets_the_expected_words_as_they_are_and_reports_no_speech(
+    tmp_path: Path,
+) -> None:
+    model = FakeWhisperModel([("Number", 0.3, 0.6), ("three", 0.6, 0.9)], no_speech=0.12)
+    stt = WhisperTranscriber("small.en", load=lambda _name: model, decode=lambda _path: "s")
+
+    result = stt.transcribe(tmp_path / "clip.wav", language="en", expect="number three")
+
+    assert model.calls[0]["initial_prompt"] == "number three"  # verbatim, not vocabulary
+    assert result.no_speech_prob == 0.12
+
+
+def test_whisper_hearing_nothing_reports_no_speech(tmp_path: Path) -> None:
+    stt = WhisperTranscriber(
+        "small.en", load=lambda _name: FakeWhisperModel([]), decode=lambda _path: "s"
+    )
+
+    result = stt.transcribe(tmp_path / "silence.wav", language="en")
+
+    assert result.words == ()
+    assert result.no_speech_prob == 1.0
 
 
 def test_whisper_failure_while_decoding_is_transient(tmp_path: Path) -> None:
