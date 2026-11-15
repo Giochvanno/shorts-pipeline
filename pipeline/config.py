@@ -100,6 +100,10 @@ class TtsChain(_Strict):
 
 
 class ImageChain(_Strict):
+    timeout_s: float = Field(gt=0, le=600)
+    # fal bills per megapixel, rounded up. Applies to the primary provider.
+    usd_per_megapixel: float = Field(ge=0, le=1)
+    licence: str = Field(min_length=1)  # recorded with every frame: we publish what we may
     primary: ModelRef[ImageProvider]
     fallback: ModelRef[ImageProvider] | None
 

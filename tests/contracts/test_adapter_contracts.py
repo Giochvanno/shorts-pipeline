@@ -19,7 +19,8 @@ import pytest
 
 from pipeline.adapters.http import HttpRequest, HttpResponse
 from pipeline.adapters.images import ImageClient, ImageRequest
-from pipeline.adapters.images.fake import FakeImages
+from pipeline.adapters.images.fake import FakeImages, gradient_png
+from pipeline.adapters.images.fal import FalImages
 from pipeline.adapters.llm import LlmClient, LlmRequest
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
 from pipeline.adapters.llm.fake import FakeLlm
@@ -123,7 +124,26 @@ def test_tts_rejects_empty_text(tts: TtsClient) -> None:
 
 # --- images ---------------------------------------------------------------------
 
-IMAGE_IMPLEMENTATIONS: list[Callable[[], ImageClient]] = [FakeImages]
+
+def FalOnFakeHttp() -> ImageClient:
+    """The real fal adapter with the network replaced: CI has no key and must not pay."""
+    png = gradient_png(64, 112, (46, 64, 87), (232, 216, 176))
+
+    def transport(request: HttpRequest) -> HttpResponse:
+        body = json.loads(request.body or b"")
+        image = {"url": "data:image/png;base64," + base64.b64encode(png).decode()}
+        return HttpResponse(200, json.dumps({"images": [image], "seed": body["seed"]}).encode())
+
+    return FalImages(
+        "acme/flux-test",
+        api_key="test-key",
+        usd_per_megapixel=0.025,
+        licence="test licence",
+        transport=transport,
+    )
+
+
+IMAGE_IMPLEMENTATIONS: list[Callable[[], ImageClient]] = [FakeImages, FalOnFakeHttp]
 
 IMAGE_REQUEST = ImageRequest(prompt="a lighthouse at dusk", seed=7, width=64, height=112)
 

@@ -4,6 +4,8 @@ import pytest
 
 from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosTts
 from pipeline.adapters.errors import PermanentAdapterError
+from pipeline.adapters.images.fal import API_KEY_ENV as FAL_KEY_ENV
+from pipeline.adapters.images.fal import FalImages
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
 from pipeline.adapters.registry import ALL_FAKE, build_adapters
 from pipeline.adapters.stt.whisper import WhisperTranscriber
@@ -23,11 +25,25 @@ def test_fake_adapters_are_offline_and_free() -> None:
     } == {"fake"}
 
 
-def test_ports_without_a_real_adapter_are_refused() -> None:
-    mode = ALL_FAKE.model_copy(update={"images": "real"})
+def test_an_image_provider_without_an_adapter_is_refused() -> None:
+    models = load_channel().models
+    on_replicate = models.images.model_copy(update={"primary": models.images.fallback})
+    models = models.model_copy(update={"images": on_replicate})
 
-    with pytest.raises(NotImplementedError, match="not connected yet"):
-        build_adapters(load_channel().models, mode=mode)
+    with pytest.raises(NotImplementedError, match="only fal"):
+        build_adapters(models, mode=ALL_FAKE.model_copy(update={"images": "real"}))
+
+
+def test_real_images_are_fal_with_model_and_price_from_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(FAL_KEY_ENV, "fal-test-key")
+    models = load_channel().models
+    adapters = build_adapters(models, mode=ALL_FAKE.model_copy(update={"images": "real"}))
+
+    assert isinstance(adapters.images, FalImages)
+    assert adapters.images.model == models.images.primary.model
+    assert "fal-test-key" not in repr(adapters.images)
 
 
 def test_real_llm_uses_claude_cli_with_models_from_config() -> None:
