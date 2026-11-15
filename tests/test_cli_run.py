@@ -7,7 +7,7 @@ import pytest
 from pipeline.cli import DB_NAME, LOG_NAME, main, pick_topic
 from pipeline.media import probe
 from pipeline.runner import DEFAULT_STEPS
-from pipeline.state import StateStore
+from pipeline.state import StateStore, StepStatus
 
 
 @pytest.mark.usefixtures("ffmpeg")
@@ -45,16 +45,20 @@ def test_run_takes_the_next_unused_topic(tmp_path: Path) -> None:
         assert pick_topic(store, "fact-of-day", topics) is None
 
 
-def test_ports_without_a_real_adapter_are_refused(
+def test_real_images_without_a_key_stop_at_visuals_and_pay_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)  # no .env here: never read real keys in tests
+    monkeypatch.delenv("FAL_KEY", raising=False)
     code = main(["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path), "--real", "images"])
 
-    assert code == 2
-    assert "not connected yet" in capsys.readouterr().err
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "FAL_KEY is not set" in out
     with StateStore(tmp_path / DB_NAME) as store:
-        assert store.videos() == []  # nothing was created
+        (video,) = store.videos()
+        assert store.step(video.id, "visuals").status == StepStatus.FAILED
+        assert store.video_cost(video.id) == 0.0
 
 
 def test_real_voice_without_real_timings_is_refused_before_anything_runs(

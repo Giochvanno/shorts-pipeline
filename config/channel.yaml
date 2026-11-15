@@ -49,5 +49,8 @@ models:
     primary:  { provider: faster_whisper, model: small.en }
     fallback: null
   images:
+    timeout_s: 120           # one frame takes seconds; a cold start can take longer
+    usd_per_megapixel: 0.025 # fal FLUX.1 [dev], rounded up to whole MP (fal model page, 2026-11)
+    licence: "FLUX.1 [dev] via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
     primary:  { provider: fal,       model: fal-ai/flux/dev }
     fallback: { provider: replicate, model: black-forest-labs/flux-dev }

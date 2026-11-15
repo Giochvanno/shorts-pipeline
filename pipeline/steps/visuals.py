@@ -24,11 +24,13 @@ from pipeline.steps.base import StepContext, StepError, StepResult
 log = get_logger()
 
 FRAMES_DIR = "frames"
-# Generation size, close to 9:16. Render scales and crops to 1080x1920.
-WIDTH, HEIGHT = 768, 1344
+# Generation size: exactly 9:16 and 720p, the size image-to-video models start from.
+# 0.92 megapixels: billed as one megapixel however a provider counts. Render scales to
+# 1080x1920.
+WIDTH, HEIGHT = 720, 1280
 _IMAGE_SUFFIXES = {".png", ".jpg", ".webp"}
 _SIGNATURES = {"png": (b"\x89PNG\r\n\x1a\n",), "jpg": (b"\xff\xd8\xff",), "webp": (b"RIFF",)}
-_MIN_BYTES = 1024  # anything smaller is not a usable 768x1344 frame
+_MIN_BYTES = 1024  # anything smaller is not a usable 720x1280 frame
 
 
 def looks_like_image(data: bytes, fmt: str) -> bool:
@@ -69,9 +71,12 @@ def _generate_scene(ctx: StepContext, index: int, prompt: str, seed: int) -> Ima
     tries = ctx.series.visual_bible.max_attempts_per_scene
     reason = ""
     for attempt in range(1, tries + 1):
+        # Same seed, same prompt, same image: a retry with the video's seed would repeat a
+        # blanked or empty frame. The first try keeps the video's seed (one look per video).
+        attempt_seed = (seed + attempt - 1) % 2**32
         try:
             result = ctx.images.generate(
-                ImageRequest(prompt=prompt, seed=seed, width=WIDTH, height=HEIGHT)
+                ImageRequest(prompt=prompt, seed=attempt_seed, width=WIDTH, height=HEIGHT)
             )
         except TransientAdapterError as e:
             reason = str(e)

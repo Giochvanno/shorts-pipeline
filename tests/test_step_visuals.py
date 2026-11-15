@@ -7,6 +7,8 @@ from dataclasses import replace
 
 import pytest
 
+from pipeline.adapters.errors import TransientAdapterError
+from pipeline.adapters.images import ImageRequest, ImageResult
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.artifacts import read_meta
 from pipeline.config import SeriesConfig
@@ -116,3 +118,31 @@ def test_render_gets_a_clear_error_for_missing_frames(scripted: StepContext) -> 
         visuals.frame_paths(scripted.run_dir, 3)
 
     assert not exc.value.retryable
+
+
+def test_frames_are_720p_portrait(scripted: StepContext, fake_images: FakeImages) -> None:
+    visuals.run(scripted)
+
+    assert {(call.width, call.height) for call in fake_images.calls} == {(720, 1280)}
+
+
+class BlankFirst(FakeImages):
+    """Like a safety-checker blank: the first try fails, then any other seed works."""
+
+    def generate(self, request: ImageRequest) -> ImageResult:
+        if not self.calls:
+            self.calls.append(request)
+            raise TransientAdapterError("blanked by the safety checker")
+        return super().generate(request)
+
+
+def test_a_retry_uses_a_new_seed_and_meta_records_it(scripted: StepContext) -> None:
+    images = BlankFirst()
+    visuals.run(replace(scripted, images=images))
+
+    first, second = images.calls[0], images.calls[1]
+    base = visuals.video_seed(scripted.video_id, scripted.revision)
+    assert (first.seed, second.seed) == (base, base + 1)  # same seed would blank again
+    meta = read_meta(scripted.run_dir / visuals.FRAMES_DIR / "scene_00.png")
+    assert meta is not None and meta["seed"] == base + 1
+    assert all(call.seed == base for call in images.calls[2:])  # other scenes: the video's seed

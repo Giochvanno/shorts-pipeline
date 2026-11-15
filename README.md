@@ -47,6 +47,7 @@ uv run python -m pipeline run --series fact-of-day --real llm    # real Claude v
 uv sync --extra stt                                              # once: faster-whisper (voice check)
 uv run python -m pipeline run --series fact-of-day --real tts --real stt   # real voice, checked
 uv run python -m pipeline recheck --video 6     # re-run the voice check on kept takes (free)
+uv run python -m pipeline run --series fact-of-day --real images   # FLUX frames on fal (~$0.025 each)
 uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
@@ -54,7 +55,7 @@ uv run python -m pipeline check-config   # validate config/*.yaml after editing
 FFmpeg must be in PATH for the render step and its tests (`ffmpeg -version`).
 
 Keys for paid providers go into `.env` in the repo root (git ignores it), one per line:
-`ELEVENLABS_API_KEY=...`. Variables already set in the shell win over the file.
+`ELEVENLABS_API_KEY=...`, `FAL_KEY=...`. Variables already set in the shell win over the file.
 
 ## Checks (same as CI)
 
@@ -89,6 +90,7 @@ pipeline/            core library
                      http.py: stdlib HTTP behind a swappable transport (fake in tests)
                      llm/claude_cli.py: Claude via `claude -p` on the subscription
                      tts/elevenlabs.py: voice + per-character timings, cost from credits
+                     images/fal.py: FLUX frames (720x1280, one megapixel each) on fal
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```
