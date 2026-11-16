@@ -48,6 +48,36 @@ def test_all_scenes_share_one_seed_per_video(
     assert visuals.video_seed(1, 0) != visuals.video_seed(1, 1)  # "redo visuals" = new seed
 
 
+def test_the_scene_light_replaces_the_bible_default(series: SeriesConfig) -> None:
+    bible = series.visual_bible
+
+    lit = visuals.build_image_prompt(bible, "a wombat on a hill", "cool moonlight at night")
+    default = visuals.build_image_prompt(bible, "a wombat on a hill")
+
+    assert "lighting: cool moonlight at night" in lit
+    assert bible.lighting not in lit
+    assert f"lighting: {bible.lighting}" in default
+
+
+def test_colour_words_replace_the_hex_codes(series: SeriesConfig) -> None:
+    worded = series.visual_bible.model_copy(update={"colours": "deep slate blue, warm sand"})
+
+    prompt = visuals.build_image_prompt(worded, "a wombat on a hill")
+
+    assert "colour palette deep slate blue, warm sand" in prompt
+    assert "#" not in prompt
+
+
+def test_the_visuals_step_uses_each_scenes_light(ctx: StepContext, fake_images: FakeImages) -> None:
+    script.run(ctx)
+    visuals.run(ctx)
+
+    lights = [s.lighting for s in script.load(ctx.run_dir).scenes]
+    assert all(lights)
+    calls = fake_images.calls
+    assert all(f"lighting: {light}" in c.prompt for light, c in zip(lights, calls, strict=True))
+
+
 def test_prompt_is_bible_plus_scene(series: SeriesConfig) -> None:
     prompt = visuals.build_image_prompt(series.visual_bible, "a lighthouse on a cliff")
 
@@ -100,12 +130,23 @@ def test_style_change_regenerates_every_frame(
 ) -> None:
     visuals.run(scripted)
     calls = len(fake_images.calls)
-    bible = scripted.series.visual_bible.model_copy(update={"lighting": "golden hour"})
+    bible = scripted.series.visual_bible.model_copy(update={"colours": "golden ochre, deep teal"})
     series = scripted.series.model_copy(update={"visual_bible": bible})
 
     visuals.run(replace(scripted, series=series))
 
     assert len(fake_images.calls) == 2 * calls
+
+
+def test_the_bible_light_is_only_a_default(scripted: StepContext, fake_images: FakeImages) -> None:
+    visuals.run(scripted)
+    calls = len(fake_images.calls)
+    bible = scripted.series.visual_bible.model_copy(update={"lighting": "golden hour"})
+    series = scripted.series.model_copy(update={"visual_bible": bible})
+
+    visuals.run(replace(scripted, series=series))
+
+    assert len(fake_images.calls) == calls  # every scene names its own light: nothing to redo
 
 
 def test_needs_a_script_first(ctx: StepContext) -> None:

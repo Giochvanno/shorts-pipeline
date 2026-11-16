@@ -41,13 +41,16 @@ def looks_like_image(data: bytes, fmt: str) -> bool:
     return len(data) >= _MIN_BYTES and data.startswith(_SIGNATURES.get(fmt, (b"\x00\xff",)))
 
 
-def build_image_prompt(bible: VisualBible, scene_visual: str) -> str:
+def build_image_prompt(bible: VisualBible, scene_visual: str, lighting: str | None = None) -> str:
+    """Style + the scene + its light (the bible's default if the scene names none) + camera
+    + colours (in words when the bible has them: hex codes are text to an image model)."""
+    colours = bible.colours.strip() if bible.colours else ", ".join(bible.palette)
     parts = [
         bible.style_prefix.strip().rstrip("."),
         scene_visual.strip().rstrip("."),
-        f"lighting: {bible.lighting}",
+        f"lighting: {(lighting or bible.lighting).strip()}",
         f"camera: {bible.camera}",
-        "colour palette " + ", ".join(bible.palette),
+        "colour palette " + colours,
     ]
     return ". ".join(parts) + "."
 
@@ -102,7 +105,7 @@ def run(ctx: StepContext) -> StepResult:
     called = False
 
     for index, scene in enumerate(scenes):
-        prompt = build_image_prompt(ctx.series.visual_bible, scene.visual)
+        prompt = build_image_prompt(ctx.series.visual_bible, scene.visual, scene.lighting)
         key = input_hash(
             {
                 "step": "visuals",

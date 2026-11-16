@@ -202,7 +202,7 @@ def test_report_and_results_hold_prices_and_an_empty_score_table(runs: Path) -> 
     for model, profile in CHAIN.fal_models.items():
         price = profile.usd_per_image or profile.usd_per_megapixel or 0
         assert f"| {profile.label} | ${price:.3f} | {count} | 0 | ${price * count:.3f} |" in report
-        assert f"| 1 | {profile.label} | | | | | | |" in report
+        assert f"| 1 | {profile.label} | | | | | | | |" in report
         assert f"| {profile.label} | | |" in report  # its style-across-the-video row
         assert model in json.dumps(
             json.loads((runs / "1" / "compare" / "results.json").read_text(encoding="utf-8"))
@@ -229,9 +229,68 @@ def test_scores_filled_in_by_hand_survive_a_re_run(runs: Path) -> None:
     run(runs, FakeFal(), *PAY)
 
     text = report.read_text(encoding="utf-8")
-    assert f"| 2 | {label} | partly | no | | | | signature bottom right |" in text
+    assert f"| 2 | {label} | partly | no | | | | | signature bottom right |" in text
     assert f"| {label} | yes | |" in text
-    assert f"| 1 | {label} | | | | | | |" in text  # nothing invented for the rest
+    assert f"| 1 | {label} | | | | | | | |" in text  # nothing invented for the rest
+
+
+def test_a_tagged_variant_draws_into_its_own_folder_next_to_the_earlier_rows(
+    runs: Path,
+) -> None:
+    run(runs, FakeFal(), *PAY, "--models", MODELS[0])
+    fake = FakeFal()
+    count = scenes(runs)
+
+    code, text = run(
+        runs,
+        fake,
+        *PAY,
+        "--models", MODELS[0],
+        "--tag", "style3",
+        "--against", "compare",
+        "--style", "Clean digital painting",
+        "--colours", "deep slate blue, warm sand",
+        "--lighting", "2=cool moonlight at night",
+    )  # fmt: skip
+
+    assert code == 0
+    assert len(fake.requests) == count  # the earlier row costs nothing
+    bodies = fake.bodies()
+    assert "lighting: cool moonlight at night" in str(bodies[1]["prompt"])
+    assert "lighting: cool moonlight" not in str(bodies[0]["prompt"])
+    assert all("colour palette deep slate blue, warm sand" in str(b["prompt"]) for b in bodies)
+    assert not any("#2E4057" in str(b["prompt"]) for b in bodies)
+    variant = runs / "1" / "compare-style3"
+    assert len(list((variant / model_dir(MODELS[0])).glob("scene_*.png"))) == count
+    assert len(list((runs / "1" / "compare" / model_dir(MODELS[0])).glob("scene_*.png"))) == count
+    report = (variant / "report.md").read_text(encoding="utf-8")
+    label = CHAIN.fal_models[MODELS[0]].label
+    assert f"| 1 | {label} (compare) |" in report and f"| 1 | {label} |" in report
+    assert "scene 2: cool moonlight at night" in report
+    info = probe(variant / "grid.png")
+    assert info.height == HEADER_H + 3 * (LABEL_H + CELL_H + GAP)  # as made, earlier, new
+    assert "Colours: deep slate blue" in text
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (("--lighting", "moonlight"), "N=light"),
+        (("--lighting", "99=moonlight"), "scenes 1-"),
+        (("--tag", "../up"), "--tag"),
+        (("--against", "Compare"), "--against"),
+    ],
+)
+def test_malformed_variant_options_are_errors(
+    runs: Path, extra: tuple[str, str], message: str
+) -> None:
+    fake = FakeFal()
+
+    code, text = run(runs, fake, *PAY, *extra)
+
+    assert code == 2
+    assert message in text
+    assert fake.requests == []
 
 
 def test_spend_goes_to_the_month_not_to_the_video(runs: Path) -> None:

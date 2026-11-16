@@ -161,6 +161,36 @@ def test_a_script_with_a_bad_visual_is_retried(ctx: StepContext) -> None:
     assert exc.value.retryable  # the LLM gets another go
 
 
+def test_a_bad_lighting_is_refused_like_a_bad_visual(ctx: StepContext) -> None:
+    data = _fake_script_dict(ctx)
+    scenes = data["scenes"]
+    assert isinstance(scenes, list)
+    scenes[1]["lighting"] = "dim light with no shadows"
+
+    with pytest.raises(StepError, match="scene 2 lighting: says what is absent"):
+        script.run(replace(ctx, llm_heavy=_llm_answering(json.dumps(data))))
+
+
+def test_scripts_from_before_scenes_had_light_still_load(ctx: StepContext) -> None:
+    data = _fake_script_dict(ctx)
+    scenes = data["scenes"]
+    assert isinstance(scenes, list)
+    for scene in scenes:
+        del scene["lighting"]
+    (ctx.run_dir / script.OUTPUT).parent.mkdir(parents=True, exist_ok=True)
+    (ctx.run_dir / script.OUTPUT).write_text(json.dumps(data), encoding="utf-8")
+
+    assert all(scene.lighting is None for scene in script.load(ctx.run_dir).scenes)
+
+
+def test_prompt_asks_for_each_scenes_light(ctx: StepContext, fake_llm: FakeLlm) -> None:
+    script.run(ctx)
+    system = fake_llm.calls[0].system
+
+    assert '"lighting"' in system
+    assert "cool moonlight at night" in system
+
+
 def test_prompt_asks_for_drawable_subjects_described_by_their_look(
     ctx: StepContext, fake_llm: FakeLlm
 ) -> None:
