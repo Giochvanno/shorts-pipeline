@@ -22,9 +22,10 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.llm.base import LlmRequest, LlmResponse
@@ -100,12 +101,14 @@ class ClaudeCliLlm:
         executable: str = "claude",
         run: Runner = subprocess.run,
         which: Callable[[str], str | None] = shutil.which,
+        popen: Callable[..., "subprocess.Popen[bytes]"] = subprocess.Popen,
     ) -> None:
         self._model = model
         self._timeout_s = timeout_s
         self._executable = executable
         self._run = run
         self._which = which
+        self._popen = popen
 
     @property
     def provider(self) -> str:
@@ -115,11 +118,11 @@ class ClaudeCliLlm:
     def model(self) -> str:
         return self._model
 
-    def command(self, executable: str) -> list[str]:
+    def command(self, executable: str, *, output_format: str = "json") -> list[str]:
         return [
             executable,
             "-p",
-            "--output-format", "json",
+            "--output-format", output_format,
             "--model", self._model,
             "--system-prompt", SYSTEM_PROMPT,
             "--tools", "",
@@ -128,15 +131,28 @@ class ClaudeCliLlm:
             "--safe-mode",
         ]  # fmt: skip
 
-    def complete(self, request: LlmRequest) -> LlmResponse:
+    def _executable_path(self) -> str:
         executable = self._which(self._executable)
         if executable is None:
             raise PermanentAdapterError(
                 "Claude Code CLI not found in PATH: install it with"
                 " `irm https://claude.ai/install.ps1 | iex` and sign in"
             )
-        stdin = f"{request.system.strip()}\n\n---\n\n{request.prompt.strip()}\n".encode()
-        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        return executable
+
+    @staticmethod
+    def _stdin(request: LlmRequest) -> bytes:
+        return f"{request.system.strip()}\n\n---\n\n{request.prompt.strip()}\n".encode()
+
+    @staticmethod
+    def _env() -> dict[str, str]:
+        # Never the API key: the CLI would bill the API instead of the subscription.
+        return {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+
+    def complete(self, request: LlmRequest) -> LlmResponse:
+        executable = self._executable_path()
+        stdin = self._stdin(request)
+        env = self._env()
         with tempfile.TemporaryDirectory(prefix="claude_", ignore_cleanup_errors=True) as empty:
             try:
                 proc = self._run(
@@ -155,6 +171,60 @@ class ClaudeCliLlm:
             except OSError as e:
                 raise TransientAdapterError(f"could not start claude: {e}") from e
         return self._parse(proc)
+
+    def stream(
+        self,
+        request: LlmRequest,
+        *,
+        on_text: Callable[[str], None],
+        on_thinking: Callable[[str], None] | None = None,
+    ) -> LlmResponse:
+        """The same call as `complete`, shown while it is written (for pipeline.watch).
+
+        `--output-format stream-json --verbose --include-partial-messages` prints one JSON
+        event per line; text arrives as `stream_event` / `text_delta`, and the last line is
+        the same `result` object `complete` reads. The pipeline itself uses `complete`.
+        """
+        executable = self._executable_path()
+        command = [
+            *self.command(executable, output_format="stream-json"),
+            "--verbose",
+            "--include-partial-messages",
+        ]
+        with tempfile.TemporaryDirectory(prefix="claude_", ignore_cleanup_errors=True) as empty:
+            try:
+                proc = self._popen(
+                    command,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=Path(empty),
+                    env=self._env(),
+                )
+            except OSError as e:
+                raise TransientAdapterError(f"could not start claude: {e}") from e
+            stdin, stdout, stderr = proc.stdin, proc.stdout, proc.stderr
+            assert stdin is not None and stdout is not None and stderr is not None  # all PIPE
+            timer = threading.Timer(self._timeout_s, proc.kill)
+            errors: list[bytes] = []
+            drain = threading.Thread(target=lambda: errors.append(stderr.read()), daemon=True)
+            timer.start()
+            drain.start()
+            try:
+                stdin.write(self._stdin(request))
+                stdin.close()
+                result = _read_stream(stdout, on_text, on_thinking)
+                returncode = proc.wait()
+            finally:
+                timed_out = not timer.is_alive()
+                timer.cancel()
+                drain.join(timeout=5)
+        if timed_out and result is None:
+            raise TransientAdapterError(f"claude -p timed out after {self._timeout_s:.0f} s")
+        final = json.dumps(result).encode() if result is not None else b""
+        return self._parse(
+            subprocess.CompletedProcess(command, returncode, final, b"".join(errors))
+        )
 
     def _parse(self, proc: "subprocess.CompletedProcess[bytes]") -> LlmResponse:
         stdout = proc.stdout.decode("utf-8", errors="replace").strip()
@@ -188,6 +258,36 @@ class ClaudeCliLlm:
             output_tokens=int(usage.get("output_tokens") or 0),
             cost_usd=float(data.get("total_cost_usd") or 0.0),
         )
+
+
+def _read_stream(
+    lines: IO[bytes],
+    on_text: Callable[[str], None],
+    on_thinking: Callable[[str], None] | None,
+) -> dict[str, Any] | None:
+    """Hand text and thinking chunks to the callbacks; return the final `result` event."""
+    result: dict[str, Any] | None = None
+    for raw in lines:
+        try:
+            event = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue  # a stray line: the CLI's own noise, never part of the answer
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "result":
+            result = event
+        elif event.get("type") == "stream_event":
+            inner = event.get("event")
+            delta = inner.get("delta") if isinstance(inner, dict) else None
+            if not isinstance(delta, dict):
+                continue
+            if delta.get("type") == "text_delta" and isinstance(delta.get("text"), str):
+                on_text(delta["text"])
+            elif delta.get("type") == "thinking_delta" and on_thinking is not None:
+                thinking = delta.get("thinking")
+                if isinstance(thinking, str):
+                    on_thinking(thinking)
+    return result
 
 
 def _json_object(text: str) -> dict[str, Any] | None:

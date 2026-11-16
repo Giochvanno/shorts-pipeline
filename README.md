@@ -47,6 +47,8 @@ uv run python -m pipeline run --series fact-of-day --real llm    # real Claude v
 uv sync --extra stt                                              # once: faster-whisper (voice check)
 uv run python -m pipeline run --series fact-of-day --real tts --real stt   # real voice, checked
 uv run python -m pipeline recheck --video 6     # re-run the voice check on kept takes (free)
+uv run python -m pipeline.watch --topic "why octopuses have three hearts"  # watch Claude write a script
+uv run python -m pipeline.watch --video 10      # what Claude got and gave for a past video (free)
 uv run python -m pipeline run --series fact-of-day --real images   # FLUX frames on fal (~$0.025 each)
 uv run pytest -m live                                            # live checks (real services)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
@@ -86,6 +88,7 @@ pipeline/            core library
   voice_check.py     did the voice say the script: compare, then re-listen to missed
                      stretches with guards against whisper echoing its prompt
   env.py             reads secrets from .env (no dependency)
+  watch.py           a window onto the script step: Claude's input, live answer, checks, FLUX prompts
   adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
                      http.py: stdlib HTTP behind a swappable transport (fake in tests)
                      llm/claude_cli.py: Claude via `claude -p` on the subscription

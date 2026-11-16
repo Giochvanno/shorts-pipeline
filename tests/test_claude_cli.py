@@ -4,11 +4,13 @@ No real `claude` runs here (CI has neither the CLI nor a login). The live check 
 tests/live/test_claude_cli_live.py, run by hand with `uv run pytest -m live`.
 """
 
+import io
 import json
 import random
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -319,3 +321,83 @@ def test_api_error_status_decides_before_text(
         _llm(FakeProcess(stdout=json.dumps(data), returncode=1)).complete(REQUEST)
 
     assert hint.lower() in str(exc.value).lower()
+
+
+# --- streaming (pipeline.watch) ---------------------------------------------------------
+
+
+class FakePopen:
+    """Stands in for subprocess.Popen: prints the given stream-json lines, records the call."""
+
+    def __init__(self, lines: list[str], returncode: int = 0, stderr: str = "") -> None:
+        self.lines, self.returncode_value, self.stderr_text = lines, returncode, stderr
+        self.calls: list[dict[str, Any]] = []
+        self.killed = False
+
+    def __call__(self, args: list[str], **kwargs: Any) -> "FakePopen":
+        self.calls.append({"args": args, **kwargs})
+        self.stdin = io.BytesIO()
+        self.stdin.close = lambda: setattr(self, "sent", self.stdin.getvalue())  # type: ignore[method-assign]
+        self.stdout = io.BytesIO("".join(f"{line}\n" for line in self.lines).encode())
+        self.stderr = io.BytesIO(self.stderr_text.encode())
+        return self
+
+    def wait(self) -> int:
+        return self.returncode_value
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def delta(kind: str, text: str) -> str:
+    field = "text" if kind == "text_delta" else "thinking"
+    event = {"type": "content_block_delta", "index": 0, "delta": {"type": kind, field: text}}
+    return json.dumps({"type": "stream_event", "event": event})
+
+
+def _streaming(popen: FakePopen) -> ClaudeCliLlm:
+    as_popen = cast("Callable[..., subprocess.Popen[bytes]]", popen)  # duck-typed stand-in
+    return ClaudeCliLlm(MODEL, which=lambda _name: "/usr/bin/claude", popen=as_popen)
+
+
+def test_stream_hands_over_text_and_thinking_and_returns_the_same_response() -> None:
+    popen = FakePopen(
+        [
+            json.dumps({"type": "system", "subtype": "init", "model": MODEL}),
+            delta("thinking_delta", "Let me think. "),
+            delta("text_delta", '{"structure"'),
+            "not json at all",  # the CLI's own noise
+            delta("text_delta", ': "x"}'),
+            json.dumps({"type": "assistant", "message": {"content": []}}),
+            json.dumps(success()),
+        ]
+    )
+    text: list[str] = []
+    thinking: list[str] = []
+
+    response = _streaming(popen).stream(REQUEST, on_text=text.append, on_thinking=thinking.append)
+
+    assert "".join(text) == '{"structure": "x"}'
+    assert thinking == ["Let me think. "]
+    assert response.text == '{"structure": "x"}'  # from the final result, as complete() reads it
+    assert (response.input_tokens, response.output_tokens) == (362, 40)
+    args = popen.calls[0]["args"]
+    assert args[args.index("--output-format") + 1] == "stream-json"
+    assert {"--verbose", "--include-partial-messages", "--safe-mode"} <= set(args)
+    assert "ANTHROPIC_API_KEY" not in popen.calls[0]["env"]
+    assert popen.sent.decode().startswith("Write a script.")  # type: ignore[attr-defined]
+
+
+def test_stream_errors_are_classified_like_complete() -> None:
+    limit = success(is_error=True, result="You've hit your usage limit · resets 9pm")
+    popen = FakePopen([json.dumps(limit)], returncode=1)
+
+    with pytest.raises(PermanentAdapterError, match="usage limit"):
+        _streaming(popen).stream(REQUEST, on_text=lambda _t: None)
+
+
+def test_stream_without_a_result_is_transient() -> None:
+    popen = FakePopen([delta("text_delta", "half an ans")], returncode=1, stderr="crashed")
+
+    with pytest.raises(TransientAdapterError):
+        _streaming(popen).stream(REQUEST, on_text=lambda _t: None)
