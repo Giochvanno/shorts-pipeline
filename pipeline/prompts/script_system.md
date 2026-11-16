@@ -16,6 +16,14 @@ Hard limits
 Visual descriptions (one per scene)
 - Describe a single image that illustrates the narration. Plain description, no style words:
   style is added later.
+- One main subject, large in the frame: a creature, object or place that can be drawn, not
+  an idea, a date or a study.
+- Name the subject and say what it looks like: shape, size, colour, distinctive features.
+  Image models do not know many animals, plants and objects (for example "an axolotl, a pale
+  pink salamander with feathery red gills and a wide flat head").
+- Each image is drawn on its own, with no memory of the others: when the same subject
+  appears again, describe its look again, the same way.
+- Describe only what is in the image. Never write what is absent ("no ...", "without ...").
 - Never include: $forbidden.
 
 Answer with JSON only, no prose and no code fences:
