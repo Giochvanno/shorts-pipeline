@@ -114,3 +114,59 @@ def test_long_hook_is_rejected(ctx: StepContext) -> None:
 
     with pytest.raises(StepError, match="hook"):
         script.run(replace(ctx, llm_heavy=_llm_answering(json.dumps(data))))
+
+
+# --- what a scene's visual may say -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("visual", "problem"),
+    [
+        ("an old print with no text", "mentions 'text'"),
+        ("a wombat drawn without labels", "says what is absent ('without')"),
+        ("a jar, not a bottle", "says what is absent ('not')"),
+        ("a botanist holding a leaf in her hands", "mentions 'hands'"),
+        ("a close-up faces study", "mentions 'close-up faces'"),
+        ("a scroll covered in letters", "mentions 'letters'"),
+        ("a shop sign with a logo", "mentions 'logo'"),  # series extra_forbidden
+    ],
+)
+def test_visuals_that_would_put_a_forbidden_word_in_the_image_prompt_are_refused(
+    series: SeriesConfig, visual: str, problem: str
+) -> None:
+    assert problem in " ".join(script.visual_problems(visual, series))
+
+
+@pytest.mark.parametrize(
+    "visual",
+    [
+        "a textured stone wall beside another notebook",  # words inside words do not count
+        "a stocky tailless wombat with short legs and small round ears on a log",
+        "a north-facing cliff at noon",
+    ],
+)
+def test_plain_descriptions_pass(series: SeriesConfig, visual: str) -> None:
+    assert script.visual_problems(visual, series) == []
+
+
+def test_a_script_with_a_bad_visual_is_retried(ctx: StepContext) -> None:
+    data = _fake_script_dict(ctx)
+    scenes = data["scenes"]
+    assert isinstance(scenes, list)
+    scenes[2]["visual"] = "a quiet hall with no people"
+
+    with pytest.raises(StepError, match="scene 3 visual: says what is absent") as exc:
+        script.run(replace(ctx, llm_heavy=_llm_answering(json.dumps(data))))
+
+    assert exc.value.retryable  # the LLM gets another go
+
+
+def test_prompt_asks_for_drawable_subjects_described_by_their_look(
+    ctx: StepContext, fake_llm: FakeLlm
+) -> None:
+    script.run(ctx)
+    system = fake_llm.calls[0].system
+
+    assert "say what it looks like" in system
+    assert "no memory of the others" in system
+    assert "Describe only what is in the image" in system

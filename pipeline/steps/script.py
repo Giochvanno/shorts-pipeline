@@ -123,6 +123,26 @@ def check_script(script: Script, series: SeriesConfig, structure: str) -> list[s
     hook_words = len(script.scenes[0].narration.split())
     if hook_words > hook_word_limit(series):
         problems.append(f"hook has {hook_words} words, limit is {hook_word_limit(series)}")
+    for number, scene in enumerate(script.scenes, start=1):
+        problems += [f"scene {number} visual: {p}" for p in visual_problems(scene.visual, series)]
+    return problems
+
+
+_NEGATION = re.compile(r"\b(no|not|without|never|none|nothing)\b", re.IGNORECASE)
+
+
+def visual_problems(visual: str, series: SeriesConfig) -> list[str]:
+    """What a scene's visual must not say. The visual goes into the image prompt word for
+    word, and image models draw what a prompt names: "no text" asks for text, and a frame of
+    video 9 got a fake signature."""
+    problems = [
+        f"mentions {term!r}"
+        for term in series.visual_bible.forbidden
+        if re.search(rf"\b{re.escape(term)}\b", visual, re.IGNORECASE)
+    ]
+    negation = _NEGATION.search(visual)
+    if negation:
+        problems.append(f"says what is absent ({negation.group(0)!r}): describe only what is there")
     return problems
 
 

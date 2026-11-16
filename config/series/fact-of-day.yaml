@@ -39,7 +39,7 @@ visual_bible:
     fine ink linework, soft watercolor fills, unlabeled
   palette: ["#2E4057", "#E8D8B0", "#C1666B", "#F5F1E6"]   # [YOURS]
   lighting: soft diffused daylight, gentle shadows
-  camera: medium or wide shot, eye level, one clear subject in the foreground, room around it  # frames are animated later
+  camera: medium shot, eye level, one clear subject large in the upper two thirds of the frame, calm plain ground below  # captions sit low; frames are animated later
   extra_forbidden: [watermark, logo]   # added on top of the hard rules in code
   max_attempts_per_scene: 3            # then fall back to stock
 
