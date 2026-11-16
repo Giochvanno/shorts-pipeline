@@ -82,6 +82,11 @@ def test_series_extras_are_added_to_hard_rules(config_dir: Path) -> None:
 # --- broken variants ----------------------------------------------------------------
 
 
+def _fal(d: dict[str, Any], model: str) -> dict[str, Any]:
+    profile: dict[str, Any] = d["models"]["images"]["fal_models"][model]
+    return profile
+
+
 def _set(section: str, key: str, value: Any) -> Mutator:
     return lambda d: d[section].update({key: value})
 
@@ -131,6 +136,11 @@ def test_unknown_provider_is_rejected(config_dir: Path) -> None:
         (lambda d: d["models"]["tts"].update(usd_per_credit=-1), "usd_per_credit"),
         (lambda d: d["models"]["tts"].update(usd_per_credit=0.2), "usd_per_credit"),
         (lambda d: d["models"]["tts"].pop("timeout_s"), "timeout_s"),
+        (lambda d: _fal(d, "fal-ai/flux/dev").update(usd_per_image=0.04), "exactly one"),
+        (lambda d: _fal(d, "fal-ai/flux/dev").pop("usd_per_megapixel"), "exactly one"),
+        (lambda d: _fal(d, "fal-ai/flux/dev")["params"].update(seed=1), "may not set seed"),
+        (lambda d: _fal(d, "fal-ai/flux/dev").update(size="9:16"), "size"),
+        (lambda d: d["models"]["images"]["fal_models"].pop("fal-ai/flux/dev"), "no fal_models"),
     ],
     ids=[
         "real-voice-fake-check",
@@ -138,6 +148,11 @@ def test_unknown_provider_is_rejected(config_dir: Path) -> None:
         "negative-price",
         "price-typo",
         "no-timeout",
+        "image-two-prices",
+        "image-no-price",
+        "image-param-overrides-adapter",
+        "image-size-mode-typo",
+        "primary-image-model-without-profile",
     ],
 )
 def test_broken_channel_is_rejected(config_dir: Path, mutate: Mutator, message: str) -> None:

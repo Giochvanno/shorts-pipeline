@@ -15,11 +15,17 @@ from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterErro
 from pipeline.adapters.http import HttpRequest, HttpResponse
 from pipeline.adapters.images import ImageRequest
 from pipeline.adapters.images.fake import gradient_png
-from pipeline.adapters.images.fal import FalImages, billed_megapixels, classify_failure
+from pipeline.adapters.images.fal import (
+    FalImages,
+    aspect_ratio,
+    billed_megapixels,
+    classify_failure,
+    png_size,
+)
 
 KEY = "fal-secret-key-123"
 MODEL = "acme/flux-test"
-PNG = gradient_png(72, 128, (46, 64, 87), (232, 216, 176))
+PNG = gradient_png(720, 1280, (46, 64, 87), (232, 216, 176))
 REQUEST = ImageRequest(prompt="a fern unrolling at dawn", seed=42, width=720, height=1280)
 
 
@@ -58,15 +64,20 @@ def ok(body: bytes | None = None) -> HttpResponse:
     return HttpResponse(200, answer() if body is None else body)
 
 
-def make(http: FakeHttp, *, api_key: str | None = KEY) -> FalImages:
+def make(http: FakeHttp, *, api_key: str | None = KEY, **profile: Any) -> FalImages:
+    settings: dict[str, Any] = {
+        "usd_per_megapixel": 0.025,
+        "params": {"enable_safety_checker": True},
+        **profile,
+    }
     return FalImages(
         MODEL,
         api_key=api_key,
-        usd_per_megapixel=0.025,
         licence="test licence",
         timeout_s=33,
         base_url="https://fal.test",
         transport=http,
+        **settings,
     )
 
 
@@ -87,11 +98,52 @@ def test_request_carries_prompt_size_seed_and_key_in_header_only() -> None:
         "prompt": REQUEST.prompt,
         "image_size": {"width": 720, "height": 1280},
         "seed": 42,
-        "num_images": 1,
         "output_format": "png",
         "sync_mode": True,
-        "enable_safety_checker": True,
+        "enable_safety_checker": True,  # the model's own params, from config
     }
+
+
+def test_an_aspect_ratio_model_gets_the_ratio_and_no_pixel_size() -> None:
+    http = FakeHttp(ok())
+    make(http, size="aspect_ratio", params={"safety_tolerance": "4"}).generate(REQUEST)
+
+    body = json.loads(http.requests[0].body or b"")
+    assert body["aspect_ratio"] == "9:16"
+    assert "image_size" not in body
+    assert body["safety_tolerance"] == "4"
+
+
+def test_a_model_without_a_seed_gets_none_and_reports_none() -> None:
+    http = FakeHttp(ok(answer(seed=None)))
+
+    result = make(http, takes_seed=False).generate(REQUEST)
+
+    assert "seed" not in json.loads(http.requests[0].body or b"")
+    assert result.seed is None  # not the request's seed: nothing could repeat this frame
+
+
+def test_model_params_cannot_replace_what_the_adapter_sets() -> None:
+    http = FakeHttp(ok())
+    make(http, params={"prompt": "something else", "sync_mode": False}).generate(REQUEST)
+
+    body = json.loads(http.requests[0].body or b"")
+    assert body["prompt"] == REQUEST.prompt
+    assert body["sync_mode"] is True
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "ratio"), [(720, 1280, "9:16"), (1080, 1920, "9:16"), (768, 1344, "4:7")]
+)
+def test_aspect_ratio_is_reduced(width: int, height: int, ratio: str) -> None:
+    assert aspect_ratio(width, height) == ratio
+
+
+def test_exactly_one_price() -> None:
+    with pytest.raises(ValueError, match="exactly one price"):
+        FalImages(MODEL, api_key=KEY, licence="l")
+    with pytest.raises(ValueError, match="exactly one price"):
+        FalImages(MODEL, api_key=KEY, licence="l", usd_per_megapixel=0.025, usd_per_image=0.04)
 
 
 @pytest.mark.parametrize("model", ["", "flux", "../admin", "acme/flux?x=1", "acme/ flux", "Acme/X"])
@@ -148,10 +200,41 @@ def test_a_cdn_link_is_downloaded_once_without_the_key() -> None:
 
 
 def test_missing_size_and_seed_fall_back_to_the_request() -> None:
-    image = {"url": "data:image/png;base64," + base64.b64encode(PNG).decode()}
+    jpeg = b"\xff\xd8\xff" + b"\x00" * 2000  # no PNG header to read the size from
+    image = {"url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}
     result = make(FakeHttp(ok(answer(images=[image], seed=None)))).generate(REQUEST)
 
     assert (result.width, result.height, result.seed) == (720, 1280, 42)
+
+
+def test_the_size_comes_from_the_png_itself_and_a_per_image_price_ignores_it() -> None:
+    tall = gradient_png(768, 1344, (0, 0, 0), (255, 255, 255))  # Gemini's "9:16"
+    image = {"url": "data:image/png;base64," + base64.b64encode(tall).decode()}  # no sizes
+    http = FakeHttp(ok(answer(images=[image])))
+
+    result = make(http, size="aspect_ratio", usd_per_megapixel=None, usd_per_image=0.04).generate(
+        REQUEST
+    )
+
+    assert (result.width, result.height) == (768, 1344)
+    assert result.cost_usd == pytest.approx(0.04)  # 1.03 MP, still one price per image
+
+
+def test_the_png_header_wins_over_sizes_in_the_json() -> None:
+    image = {
+        "url": "data:image/png;base64," + base64.b64encode(PNG).decode(),
+        "width": 1024,
+        "height": 1024,
+    }
+    result = make(FakeHttp(ok(answer(images=[image])))).generate(REQUEST)
+
+    assert (result.width, result.height) == (720, 1280)
+
+
+def test_png_size_reads_only_pngs() -> None:
+    assert png_size(PNG) == (720, 1280)
+    assert png_size(b"\xff\xd8\xff" + b"\x00" * 100) is None
+    assert png_size(PNG[:20]) is None
 
 
 # --- refused before paying -------------------------------------------------------------

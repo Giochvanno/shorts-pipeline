@@ -50,7 +50,48 @@ models:
     fallback: null
   images:
     timeout_s: 120           # one frame takes seconds; a cold start can take longer
-    usd_per_megapixel: 0.025 # fal FLUX.1 [dev], rounded up to whole MP (fal model page, 2026-11)
-    licence: "FLUX.1 [dev] via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
     primary:  { provider: fal,       model: fal-ai/flux/dev }
     fallback: { provider: replicate, model: black-forest-labs/flux-dev }
+    # How each fal model is called and what it costs (fal model pages, checked 2026-11-16).
+    # All carry fal's "Commercial use" badge. Prices are the upper bound of the bill.
+    fal_models:
+      fal-ai/flux/dev:
+        label: FLUX.1 [dev]
+        size: pixels
+        usd_per_megapixel: 0.025
+        params: { enable_safety_checker: true }
+        licence: "FLUX.1 [dev] via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
+      fal-ai/flux-2:
+        label: FLUX.2 [dev]
+        size: pixels
+        usd_per_megapixel: 0.012
+        # false: the prompt stays ours, word for word (fal would rewrite it otherwise)
+        params: { enable_safety_checker: true, enable_prompt_expansion: false }
+        licence: "FLUX.2 [dev] via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
+      fal-ai/flux-2-pro:
+        label: FLUX.2 [pro]
+        size: pixels
+        usd_per_megapixel: 0.03     # $0.03 the first MP, $0.015 each further: one MP for us
+        params: { enable_safety_checker: true, safety_tolerance: "2" }
+        licence: "FLUX.2 [pro] via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
+      fal-ai/nano-banana:
+        label: Nano Banana
+        size: aspect_ratio           # Gemini 2.5 Flash Image: 9:16 comes out 768x1344
+        usd_per_image: 0.04          # fal lists $0.039-0.0398 per image
+        params: { safety_tolerance: "4" }
+        licence: "Nano Banana (Gemini 2.5 Flash Image) via fal.ai: commercial use per the fal model page; SynthID mark (checked 2026-11-16)"
+      google/nano-banana-2.1:
+        label: Nano Banana 2.1
+        size: aspect_ratio
+        # Billed by tokens: fal lists ~$0.040 for one 1K image with medium thinking; 0.05 leaves
+        # room for longer thinking, so the estimate stays at or above the bill.
+        usd_per_image: 0.05
+        params: { resolution: "1K", thinking_level: medium, safety_tolerance: "4", enable_web_search: false }
+        licence: "Nano Banana 2.1 via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
+      bytedance/seedream/v5.5/text-to-image:
+        label: Seedream 5.5
+        size: pixels                 # 720x1280 = 921,600 px, the smallest size it takes
+        usd_per_image: 0.03          # up to 2,610,000 px; above that $0.0405
+        takes_seed: false            # no seed on fal: every call is a new draw
+        params: { enable_safety_checker: true, watermark: false }
+        licence: "Seedream 5.5 via fal.ai: commercial use per the fal model page (checked 2026-11-16)"

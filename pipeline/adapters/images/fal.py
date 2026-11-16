@@ -1,4 +1,4 @@
-"""Real images: FLUX on fal, `POST https://fal.run/{model}` (the synchronous API).
+"""Real images on fal, `POST https://fal.run/{model}` (the synchronous API).
 
 One call = one HTTPS request; FLUX at our size answers in seconds, so the queue
 API (submit, poll, fetch) would only add calls. With `sync_mode` the image comes
@@ -8,18 +8,23 @@ model ignores `sync_mode`.
 
 - The key is read from FAL_KEY (put it in `.env`) and sent only in the
   `Authorization: Key ...` header. Error texts never include it.
-- Money: fal bills per megapixel, rounded up to a whole megapixel. Cost here is
-  ceil(width x height / 1,000,000) x `usd_per_megapixel` from config: with the
-  decimal megapixel it is never below the bill. Frames are 720x1280 (0.92 MP),
-  one megapixel whichever way fal counts.
+- Models differ (`fal_models` in config/channel.yaml): FLUX takes the size in
+  pixels, Gemini models an aspect ratio; some bill per megapixel, some per image;
+  safety settings have different names. The body is the common part plus the
+  model's own `params`.
+- Money: per megapixel is rounded up to a whole megapixel, ceil(width x height /
+  1,000,000) x `usd_per_megapixel`: with the decimal megapixel it is never below
+  the bill. Frames are 720x1280 (0.92 MP), one megapixel whichever way fal counts.
+  The size is read from the PNG itself: an aspect-ratio model picks its own pixels.
 - A frame the safety checker flagged comes back black: that is a transient
   failure (the visuals step retries with another seed), not an image.
 - Errors are sorted for the runner: bad key, no balance, unknown model, a
   rejected prompt or request -> PermanentAdapterError (a human must act);
   429, 5xx, timeouts, a broken answer -> TransientAdapterError.
 
-Checked against fal's API reference for FLUX.1 [dev] and its error docs
-(November 2026). 401/402/403 are not in those docs: handled by status alone.
+Checked against fal's API references for FLUX.1 [dev], FLUX.2 [dev], FLUX.2 [pro],
+Nano Banana and the error docs (November 2026). 401/402/403 are not in those docs:
+handled by status alone.
 """
 
 import base64
@@ -27,7 +32,9 @@ import binascii
 import json
 import math
 import re
-from typing import Any
+import struct
+from collections.abc import Mapping
+from typing import Any, Literal
 
 from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.http import HttpRequest, HttpResponse, Transport, send, urllib_transport
@@ -110,23 +117,50 @@ def billed_megapixels(width: int, height: int) -> int:
     return max(1, math.ceil(width * height / 1_000_000))
 
 
+def aspect_ratio(width: int, height: int) -> str:
+    """720x1280 -> "9:16", the form Gemini models take."""
+    d = math.gcd(width, height)
+    return f"{width // d}:{height // d}"
+
+
+def png_size(data: bytes) -> tuple[int, int] | None:
+    """Width and height from a PNG header (IHDR comes first), None if it is not a PNG."""
+    if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n") or data[12:16] != b"IHDR":
+        return None
+    width, height = struct.unpack(">II", data[16:24])
+    return (width, height) if width > 0 and height > 0 else None
+
+
+SizeMode = Literal["pixels", "aspect_ratio"]
+
+
 class FalImages:
     def __init__(
         self,
         model: str,
         *,
         api_key: str | None,
-        usd_per_megapixel: float,
         licence: str,
+        usd_per_megapixel: float | None = None,
+        usd_per_image: float | None = None,
+        size: SizeMode = "pixels",
+        params: Mapping[str, str | int | float | bool] | None = None,
+        takes_seed: bool = True,
         timeout_s: float = 120,
         base_url: str = BASE_URL,
         transport: Transport = urllib_transport,
     ) -> None:
         if not _MODEL_ID.fullmatch(model):
             raise ValueError(f"not a fal model id: {model!r}")  # it goes into the URL path
+        if (usd_per_megapixel is None) == (usd_per_image is None):
+            raise ValueError("give exactly one price: usd_per_megapixel or usd_per_image")
         self._model = model
         self._api_key = api_key
         self._usd_per_megapixel = usd_per_megapixel
+        self._usd_per_image = usd_per_image
+        self._size = size
+        self._params = dict(params or {})
+        self._takes_seed = takes_seed
         self._licence = licence
         self._timeout_s = timeout_s
         self._base_url = base_url.rstrip("/")
@@ -143,15 +177,28 @@ class FalImages:
     def model(self) -> str:
         return self._model
 
+    def price(self, width: int, height: int) -> float:
+        """Dollars for one image of this size: per image, or per started megapixel."""
+        if self._usd_per_image is not None:
+            return self._usd_per_image
+        assert self._usd_per_megapixel is not None  # one of the two, checked in __init__
+        return round(billed_megapixels(width, height) * self._usd_per_megapixel, 6)
+
     def request_for(self, request: ImageRequest) -> HttpRequest:
+        size: dict[str, Any] = (
+            {"image_size": {"width": request.width, "height": request.height}}
+            if self._size == "pixels"
+            else {"aspect_ratio": aspect_ratio(request.width, request.height)}
+        )
+        # One image is every model's default; FLUX.2 [pro] does not even take num_images.
+        seed: dict[str, Any] = {"seed": request.seed} if self._takes_seed else {}
         body = {
+            **self._params,
             "prompt": request.prompt,
-            "image_size": {"width": request.width, "height": request.height},
-            "seed": request.seed,
-            "num_images": 1,
+            **size,
+            **seed,
             "output_format": OUTPUT_FORMAT,
             "sync_mode": True,
-            "enable_safety_checker": True,
         }
         return HttpRequest(
             method="POST",
@@ -181,9 +228,11 @@ class FalImages:
             raise TransientAdapterError("fal's safety checker blanked the image: try another seed")
         image = _first_image(data)
         data_bytes, fmt = self._image_bytes(image)
-        width = _int(image.get("width"), request.width)
-        height = _int(image.get("height"), request.height)
-        seed = _int(data.get("seed"), request.seed)
+        width, height = png_size(data_bytes) or (
+            _int(image.get("width"), request.width),
+            _int(image.get("height"), request.height),
+        )
+        seed = _int(data.get("seed"), request.seed) if self._takes_seed else None
         return ImageResult(
             image=data_bytes,
             format=fmt,
@@ -192,7 +241,7 @@ class FalImages:
             seed=seed,
             provider=PROVIDER,
             model=self._model,
-            cost_usd=round(billed_megapixels(width, height) * self._usd_per_megapixel, 6),
+            cost_usd=self.price(width, height),
             licence=self._licence,
         )
 

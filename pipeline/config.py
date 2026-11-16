@@ -99,13 +99,50 @@ class TtsChain(_Strict):
     fallback: ModelRef[TtsProvider] | None
 
 
+FalParam = str | int | float | bool
+# Set by the adapter for every model: a profile may not override them.
+FAL_RESERVED_PARAMS = frozenset(
+    {"prompt", "seed", "image_size", "aspect_ratio", "num_images", "output_format", "sync_mode"}
+)
+
+
+class FalModel(_Strict):
+    """How one fal model is called and what it costs. Models differ in all three."""
+
+    label: str = Field(min_length=1, max_length=40)  # short name for reports and grids
+    # pixels: `image_size: {width, height}` (FLUX); aspect_ratio: "9:16" (Gemini models)
+    size: Literal["pixels", "aspect_ratio"]
+    # Exactly one price. Per megapixel is rounded up to whole megapixels (fal's billing).
+    usd_per_megapixel: float | None = Field(default=None, gt=0, le=1)
+    usd_per_image: float | None = Field(default=None, gt=0, le=1)
+    params: dict[str, FalParam] = Field(default_factory=dict)  # model-specific: safety etc.
+    # false: the model has no seed (Seedream 5.5). A retry is then simply a new draw, and the
+    # same prompt gives a new frame on every call.
+    takes_seed: bool = True
+    licence: str = Field(min_length=1)  # recorded with every frame: we publish what we may
+
+    @model_validator(mode="after")
+    def _one_price_and_no_reserved_params(self) -> Self:
+        if (self.usd_per_megapixel is None) == (self.usd_per_image is None):
+            raise ValueError("set exactly one of usd_per_megapixel and usd_per_image")
+        reserved = sorted(FAL_RESERVED_PARAMS & set(self.params))
+        if reserved:
+            raise ValueError(f"params may not set {', '.join(reserved)}: the adapter does")
+        return self
+
+
 class ImageChain(_Strict):
     timeout_s: float = Field(gt=0, le=600)
-    # fal bills per megapixel, rounded up. Applies to the primary provider.
-    usd_per_megapixel: float = Field(ge=0, le=1)
-    licence: str = Field(min_length=1)  # recorded with every frame: we publish what we may
     primary: ModelRef[ImageProvider]
     fallback: ModelRef[ImageProvider] | None
+    # Every fal model we may call, by model id. `pipeline.compare_images` draws with each.
+    fal_models: dict[str, FalModel] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _primary_has_a_profile(self) -> Self:
+        if self.primary.provider == "fal" and self.primary.model not in self.fal_models:
+            raise ValueError(f"no fal_models entry for the primary model {self.primary.model!r}")
+        return self
 
 
 class SttChain(_Strict):

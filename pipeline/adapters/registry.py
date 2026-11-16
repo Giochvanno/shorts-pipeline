@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 
 from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosLlm, ChaosTts, Sleep
+from pipeline.adapters.http import Transport, urllib_transport
 from pipeline.adapters.images import ImageClient
 from pipeline.adapters.images.fake import FakeImages
 from pipeline.adapters.images.fal import API_KEY_ENV as FAL_KEY_ENV
@@ -55,14 +56,27 @@ def _real_tts(chain: TtsChain) -> TtsClient:
     )
 
 
-def _real_images(chain: ImageChain) -> ImageClient:
+def fal_images(
+    chain: ImageChain, model: str, *, transport: Transport = urllib_transport
+) -> FalImages:
+    """A fal client for any model in `fal_models`: the primary, or one under comparison."""
+    profile = chain.fal_models[model]
     return FalImages(
-        chain.primary.model,
+        model,
         api_key=os.environ.get(FAL_KEY_ENV),
-        usd_per_megapixel=chain.usd_per_megapixel,
-        licence=chain.licence,
+        licence=profile.licence,
+        usd_per_megapixel=profile.usd_per_megapixel,
+        usd_per_image=profile.usd_per_image,
+        size=profile.size,
+        params=profile.params,
+        takes_seed=profile.takes_seed,
         timeout_s=chain.timeout_s,
+        transport=transport,
     )
+
+
+def _real_images(chain: ImageChain) -> ImageClient:
+    return fal_images(chain, chain.primary.model)
 
 
 def build_adapters(
