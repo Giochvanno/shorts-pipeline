@@ -20,7 +20,7 @@ class ImageResult:
     format: ImageFormat
     width: int
     height: int
-    seed: int
+    seed: int | None  # None: the model takes no seed, the frame cannot be drawn again
     provider: str
     model: str
     cost_usd: float

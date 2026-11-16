@@ -71,8 +71,12 @@ class Ledger:
         self._step: str | None = None
 
     @contextmanager
-    def scope(self, video_id: int, step: str) -> Iterator[None]:
-        """Attribute every call inside the block to this video and step."""
+    def scope(self, video_id: int | None, step: str) -> Iterator[None]:
+        """Attribute every call inside the block to this video and step.
+
+        No video (an experiment such as compare_images): the month's limit still applies,
+        no video's limit does.
+        """
         previous = (self._video_id, self._step)
         self._video_id, self._step = video_id, step
         try:

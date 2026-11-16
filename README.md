@@ -50,7 +50,10 @@ uv run python -m pipeline recheck --video 6     # re-run the voice check on kept
 uv run python -m pipeline.watch --topic "why octopuses have three hearts"  # watch Claude write a script
 uv run python -m pipeline.watch --video 10      # what Claude got and gave for a past video (free)
 uv run python -m pipeline run --series fact-of-day --real images   # FLUX frames on fal (~$0.025 each)
+uv run python -m pipeline.compare_images --video 10 --style "..."  # plan and price of a model comparison (free)
+uv run python -m pipeline.compare_images --video 10 --style "..." --pay  # draw it: grid + report, max $1
 uv run pytest -m live                                            # live checks (real services)
+uv run pytest tests/live/test_claude_vision_live.py -m live -s     # does Claude see a frame? (subscription)
 uv run python -m pipeline check-config   # validate config/*.yaml after editing
 ```
 
@@ -89,11 +92,13 @@ pipeline/            core library
                      stretches with guards against whisper echoing its prompt
   env.py             reads secrets from .env (no dependency)
   watch.py           a window onto the script step: Claude's input, live answer, checks, FLUX prompts
-  adapters/          ports + fakes (llm, tts, images, notify) + chaos wrappers
+  compare_images.py  one video's scenes drawn by every model in fal_models: grid, report, ledger
+  adapters/          ports + fakes (llm, tts, images, vision, notify) + chaos wrappers
                      http.py: stdlib HTTP behind a swappable transport (fake in tests)
                      llm/claude_cli.py: Claude via `claude -p` on the subscription
                      tts/elevenlabs.py: voice + per-character timings, cost from credits
-                     images/fal.py: FLUX frames (720x1280, one megapixel each) on fal
+                     images/fal.py: frames on fal (720x1280); size, price and params per model
+                     vision/claude_cli.py: frame review (subject, text, blood-like marks) via claude -p
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

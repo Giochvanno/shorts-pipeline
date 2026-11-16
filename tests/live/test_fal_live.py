@@ -18,6 +18,7 @@ from pipeline.adapters.errors import PermanentAdapterError
 from pipeline.adapters.http import HttpRequest, HttpResponse, urllib_transport
 from pipeline.adapters.images import ImageRequest
 from pipeline.adapters.images.fal import API_KEY_ENV, FalImages, billed_megapixels
+from pipeline.adapters.registry import fal_images
 from pipeline.config import load_channel, load_series
 from pipeline.env import load_env
 from pipeline.steps.visuals import HEIGHT, WIDTH, build_image_prompt
@@ -39,16 +40,10 @@ class Recorder:
         return self.last
 
 
-def _images(api_key: str, transport: Recorder) -> FalImages:
+def _images(api_key: str, transport: Recorder, monkeypatch: pytest.MonkeyPatch) -> FalImages:
+    monkeypatch.setenv(API_KEY_ENV, api_key)
     chain = load_channel().models.images
-    return FalImages(
-        chain.primary.model,
-        api_key=api_key,
-        usd_per_megapixel=chain.usd_per_megapixel,
-        licence=chain.licence,
-        timeout_s=chain.timeout_s,
-        transport=transport,
-    )
+    return fal_images(chain, chain.primary.model, transport=transport)
 
 
 def _request() -> ImageRequest:
@@ -56,23 +51,23 @@ def _request() -> ImageRequest:
     return ImageRequest(prompt=prompt, seed=1234, width=WIDTH, height=HEIGHT)
 
 
-def test_wrong_key_is_permanent_and_free() -> None:
+def test_wrong_key_is_permanent_and_free(monkeypatch: pytest.MonkeyPatch) -> None:
     recorder = Recorder()
 
     with pytest.raises(PermanentAdapterError, match="API key") as exc:
-        _images("fal-definitely-not-a-real-key", recorder).generate(_request())
+        _images("fal-definitely-not-a-real-key", recorder, monkeypatch).generate(_request())
     assert recorder.last is not None
     print(f"\nHTTP {recorder.last.status}: {recorder.last.body[:300]!r}\n-> {exc.value}")
 
 
-def test_one_frame_in_the_series_style() -> None:
+def test_one_frame_in_the_series_style(monkeypatch: pytest.MonkeyPatch) -> None:
     load_env(REPO / ".env")
     key = os.environ.get(API_KEY_ENV)
     if not key:
         pytest.skip(f"{API_KEY_ENV} is not set: add it to .env")
     recorder = Recorder()
 
-    result = _images(key, recorder).generate(_request())
+    result = _images(key, recorder, monkeypatch).generate(_request())
 
     path = REPO / "runs" / "live" / "fal.png"
     path.parent.mkdir(parents=True, exist_ok=True)

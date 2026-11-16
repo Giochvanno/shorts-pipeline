@@ -1,13 +1,16 @@
 """Adapter registry: fakes on demand, real adapters per port."""
 
+import json
+
 import pytest
 
 from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosTts
 from pipeline.adapters.errors import PermanentAdapterError
+from pipeline.adapters.images import ImageRequest
 from pipeline.adapters.images.fal import API_KEY_ENV as FAL_KEY_ENV
 from pipeline.adapters.images.fal import FalImages
 from pipeline.adapters.llm.claude_cli import ClaudeCliLlm
-from pipeline.adapters.registry import ALL_FAKE, build_adapters
+from pipeline.adapters.registry import ALL_FAKE, build_adapters, fal_images
 from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsRequest
 from pipeline.adapters.tts.elevenlabs import API_KEY_ENV, ElevenLabsTts
@@ -44,6 +47,23 @@ def test_real_images_are_fal_with_model_and_price_from_config(
     assert isinstance(adapters.images, FalImages)
     assert adapters.images.model == models.images.primary.model
     assert "fal-test-key" not in repr(adapters.images)
+
+
+def test_every_fal_model_in_config_gets_its_own_size_price_and_params() -> None:
+    chain = load_channel().models.images
+    for model, profile in chain.fal_models.items():
+        client = fal_images(chain, model)
+        body = json.loads(
+            client.request_for(ImageRequest("a fern", seed=1, width=720, height=1280)).body or b""
+        )
+
+        assert client.model == model
+        expected = profile.usd_per_image or profile.usd_per_megapixel  # 720x1280 = one MP
+        assert client.price(720, 1280) == pytest.approx(expected)
+        assert ("image_size" in body) == (profile.size == "pixels")
+        assert ("aspect_ratio" in body) == (profile.size == "aspect_ratio")
+        assert {k: body[k] for k in profile.params} == profile.params
+        assert ("seed" in body) == profile.takes_seed
 
 
 def test_real_llm_uses_claude_cli_with_models_from_config() -> None:
