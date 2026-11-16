@@ -146,6 +146,16 @@ def visual_problems(visual: str, series: SeriesConfig) -> list[str]:
     return problems
 
 
+def script_request(system: str, prompt: str, topic: str, structure: str) -> LlmRequest:
+    """The request the script step sends (pipeline.watch sends the very same one)."""
+    return LlmRequest(
+        task="script",
+        system=system,
+        prompt=prompt,
+        tags={"topic": topic, "structure": structure},
+    )
+
+
 def run(ctx: StepContext) -> StepResult:
     output = ctx.run_dir / OUTPUT
     structure = choose_structure(ctx.series, ctx.video_id)
@@ -163,14 +173,7 @@ def run(ctx: StepContext) -> StepResult:
     if is_cached(output, key):
         return StepResult(outputs=(output,), cost_usd=0.0, cached=True)
 
-    response = ctx.llm_heavy.complete(
-        LlmRequest(
-            task="script",
-            system=system,
-            prompt=prompt,
-            tags={"topic": ctx.topic, "structure": structure},
-        )
-    )
+    response = ctx.llm_heavy.complete(script_request(system, prompt, ctx.topic, structure))
     script = parse_script(response.text)
     problems = check_script(script, ctx.series, structure)
     if problems:
