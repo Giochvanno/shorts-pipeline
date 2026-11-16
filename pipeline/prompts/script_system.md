@@ -25,8 +25,11 @@ Visual descriptions (one per scene)
   appears again, describe its look again, the same way.
 - Describe only what is in the image. Never write what is absent ("no ...", "without ...").
 - Never include: $forbidden.
+- Give each scene its light in "lighting", a few words that fit the moment the narration
+  describes (for example "warm low dusk sun", "cool moonlight at night", "soft window light").
+  Keep light words out of "visual": the image prompt adds "lighting" on its own.
 
 Answer with JSON only, no prose and no code fences:
 {"structure": "$structure",
- "scenes": [{"narration": "...", "visual": "..."}],
+ "scenes": [{"narration": "...", "visual": "...", "lighting": "..."}],
  "sources": ["..."]}

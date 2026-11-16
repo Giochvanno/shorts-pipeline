@@ -17,6 +17,12 @@ Written to runs/<video>/compare/:
     results.json   every frame: model, prompt, seed, size, seconds, cost, error
     <model>/scene_NN.png   the frames, cached: a second run pays only for what is missing
 
+A prompt variant (round 3) instead of a model comparison: --tag puts it in
+runs/<video>/compare-<tag>/, --against compare adds the rows of that earlier run for
+the same models (free, from disk), --colours sets the palette in words and
+--lighting 2="cool moonlight" the light of one scene (for scripts written before
+scenes had their own light).
+
 Money: the plan's price must fit --max-usd (default $1) before the first call; each
 call is checked again against what is left, and against the month's budget. Spend
 goes into the ledger without a video: an experiment, not the cost of video N.
@@ -25,6 +31,7 @@ goes into the ledger without a video: an experiment, not the cost of video N.
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -86,6 +93,46 @@ class Row:
     @property
     def spent_usd(self) -> float:
         return round(sum(c.cost_usd for c in self.cells), 6)
+
+
+_FOLDER = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+
+
+def scene_lighting(items: Sequence[str], count: int) -> dict[int, str] | str:
+    """--lighting "2=cool moonlight" -> {2: "cool moonlight"}; an error text if malformed."""
+    found: dict[int, str] = {}
+    for item in items:
+        number, sep, text = item.partition("=")
+        if not sep or not number.strip().isdigit() or not text.strip():
+            return f"--lighting {item!r}: write it as N=light, e.g. 2=cool moonlight"
+        n = int(number)
+        if not 1 <= n <= count:
+            return f"--lighting {item!r}: the video has scenes 1-{count}"
+        found[n] = text.strip()
+    return found
+
+
+def earlier_row(folder: Path, model: str, label: str, tag: str, count: int) -> Row:
+    """The same model's frames from an earlier run, read from disk (nothing is drawn)."""
+    cells = []
+    for n in range(count):
+        found = sorted(
+            p
+            for p in (folder / model_dir(model)).glob(f"scene_{n:02d}.*")
+            if p.suffix in _IMAGE_SUFFIXES
+        )
+        cell = Cell(scene=n, path=found[0] if found else None, cached=True)
+        if not found:
+            cell.error = f"no frame in {folder.name}"
+        else:
+            meta = read_meta(found[0]) or {}
+            cell.width, cell.height, cell.seed = (
+                meta.get("width"),
+                meta.get("height"),
+                meta.get("seed"),
+            )
+        cells.append(cell)
+    return Row(label=f"{label} ({tag})", model=model, cells=cells)
 
 
 def model_dir(model: str) -> str:
@@ -336,6 +383,7 @@ SCORE_COLUMNS = (
     "No text or caption",
     "Subject in upper 2/3",
     "Style matches",
+    "Light matches the scene",
     "Good first frame for video",
     "Notes",
 )
@@ -391,6 +439,7 @@ def write_report(
     prompts: Sequence[str],
     spent_usd: float,
     max_usd: float,
+    settings: Sequence[str] = (),
 ) -> None:
     baseline, models = rows[0], rows[1:]
     kept = filled_cells(path)
@@ -399,6 +448,7 @@ def write_report(
         "",
         f"- First row: the video's own frames ({baseline.model}, the style it was made with).",
         f"- Other rows: style `{style}`, seed {seed} for every model, the same prompts.",
+        *(f"- {line}" for line in settings),
         f"- Spent in this run: ${spent_usd:.3f} of the ${max_usd:.2f} limit.",
         "",
         "| Model | Price per frame | Frames | Failed | Spent (this run) | Seconds per frame |",
@@ -522,12 +572,20 @@ def compare(
     max_usd: float,
     pay: bool,
     images_factory: ImagesFactory,
+    colours: str | None = None,
+    lighting: Sequence[str] = (),
+    tag: str | None = None,
+    against: str | None = None,
 ) -> int:
     chain = channel.models.images
     chosen = _models(chain, models)
     if isinstance(chosen, str):
         out.write(f"error  {chosen}\n")
         return 2
+    for name, value in (("--tag", tag), ("--against", against)):
+        if value is not None and not _FOLDER.fullmatch(value):
+            out.write(f"error  {name} {value!r}: use lowercase letters, digits and '-'\n")
+            return 2
     try:
         with StateStore(runs_dir / DB_NAME) as store:
             video = store.video(video_id)
@@ -540,18 +598,40 @@ def compare(
     except StepError as e:
         out.write(f"error  {e}\n")
         return 2
+    relit = scene_lighting(lighting, len(scenes))
+    if isinstance(relit, str):
+        out.write(f"error  {relit}\n")
+        return 2
     series = load_series(video.series_id)
     bible: VisualBible = series.visual_bible
     if style:
         bible = bible.model_copy(update={"style_prefix": style})
-    prompts = [visuals.build_image_prompt(bible, scene.visual) for scene in scenes]
+    if colours:
+        bible = bible.model_copy(update={"colours": colours})
+    lights = [relit.get(n) or scene.lighting for n, scene in enumerate(scenes, start=1)]
+    prompts = [
+        visuals.build_image_prompt(bible, scene.visual, light)
+        for scene, light in zip(scenes, lights, strict=True)
+    ]
     seed = visuals.video_seed(video.id, 0)
-    compare_dir = run_dir / COMPARE_DIR
+    compare_dir = run_dir / (f"{COMPARE_DIR}-{tag}" if tag else COMPARE_DIR)
     clients = [(model, images_factory(chain, model)) for model in chosen]
+    settings = [
+        f"Colours: {bible.colours.strip() if bible.colours else ', '.join(bible.palette)}.",
+        "Lighting: "
+        + "; ".join(
+            f"scene {n}: {light or bible.lighting + ' (default)'}"
+            for n, light in enumerate(lights, start=1)
+        )
+        + ".",
+    ]
+    if against:
+        settings.append(f"Rows marked ({against}) are frames of that earlier run, for comparison.")
 
     out.write(
         f"video {video.id}  {video.series_id}  {video.topic!r}\n"
         f"style: {bible.style_prefix.strip()}\nseed:  {seed} (the video's, for every model)\n"
+        + "".join(f"{line}\n" for line in settings)
     )
     total = _plan(out, chain, clients, prompts, seed, compare_dir)
     out.write(f"total ${total:.3f} of the ${max_usd:.2f} limit\n")
@@ -566,11 +646,11 @@ def compare(
     work: list[tuple[Row, FalImages, Mapping[str, object]]] = []
     for model, client in clients:
         profile = chain.fal_models[model]
-        row = Row(
-            label=profile.label,
-            model=model,
-            price_usd=client.price(visuals.WIDTH, visuals.HEIGHT),
-        )
+        price = client.price(visuals.WIDTH, visuals.HEIGHT)
+        if against:
+            rows.append(earlier_row(run_dir / against, model, profile.label, against, len(scenes)))
+            rows[-1].price_usd = price
+        row = Row(label=profile.label, model=model, price_usd=price)
         rows.append(row)
         work.append((row, client, profile.params))
 
@@ -593,6 +673,7 @@ def compare(
         prompts=prompts,
         spent_usd=spent,
         max_usd=max_usd,
+        settings=settings,
     )
     write_results(compare_dir / "results.json", rows, prompts, seed)
     failed = sum(1 for row in rows[1:] for c in row.cells if c.error)
@@ -618,6 +699,12 @@ def main(
     parser.add_argument("--max-usd", type=float, default=DEFAULT_MAX_USD)
     parser.add_argument("--pay", action="store_true", help="draw: this spends money")
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    parser.add_argument("--colours", help="the palette in words for the prompts")
+    parser.add_argument(
+        "--lighting", action="append", default=[], help="N=light for scene N (repeatable)"
+    )
+    parser.add_argument("--tag", help="a prompt variant: writes to compare-<tag>/")
+    parser.add_argument("--against", help="add the rows of an earlier run, e.g. compare")
     args = parser.parse_args(argv)
     stream = out or sys.stdout
     if args.pay:
@@ -637,6 +724,10 @@ def main(
         max_usd=args.max_usd,
         pay=args.pay,
         images_factory=images_factory,
+        colours=args.colours,
+        lighting=args.lighting,
+        tag=args.tag,
+        against=args.against,
     )
 
 

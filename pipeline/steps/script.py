@@ -30,6 +30,9 @@ class Scene(BaseModel):
     model_config = ConfigDict(extra="forbid")
     narration: str = Field(min_length=1)
     visual: str = Field(min_length=1)
+    # The light of this scene (dusk, moonlight, a lamp): the script knows the moment, the
+    # bible only has a default. None in scripts written before scenes had it.
+    lighting: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class Script(BaseModel):
@@ -125,6 +128,10 @@ def check_script(script: Script, series: SeriesConfig, structure: str) -> list[s
         problems.append(f"hook has {hook_words} words, limit is {hook_word_limit(series)}")
     for number, scene in enumerate(script.scenes, start=1):
         problems += [f"scene {number} visual: {p}" for p in visual_problems(scene.visual, series)]
+        if scene.lighting is not None:  # goes into the image prompt word for word as well
+            problems += [
+                f"scene {number} lighting: {p}" for p in visual_problems(scene.lighting, series)
+            ]
     return problems
 
 

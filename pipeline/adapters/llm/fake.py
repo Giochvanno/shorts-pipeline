@@ -48,7 +48,9 @@ def fake_script(request: LlmRequest) -> str:
     return json.dumps(
         {
             "structure": structure,
-            "scenes": [{"narration": n, "visual": v} for n, v in scenes],
+            "scenes": [
+                {"narration": n, "visual": v, "lighting": "soft morning light"} for n, v in scenes
+            ],
             "sources": ["Fake Encyclopedia, entry 42"],
         }
     )

@@ -174,7 +174,10 @@ def watch_live(
     show_image_prompts(
         out,
         [
-            (f"scene {n}", visuals.build_image_prompt(series.visual_bible, scene.visual))
+            (
+                f"scene {n}",
+                visuals.build_image_prompt(series.visual_bible, scene.visual, scene.lighting),
+            )
             for n, scene in enumerate(script.scenes, start=1)
         ],
     )
@@ -220,7 +223,7 @@ def watch_replay(out: TextIO, runs_dir: Path, video_id: int) -> int:
             label = f"scene {n + 1} (sent, seed {frame_meta.get('seed')})"
             prompts.append((label, str(frame_meta["prompt"])))
         else:
-            built = visuals.build_image_prompt(series.visual_bible, scene.visual)
+            built = visuals.build_image_prompt(series.visual_bible, scene.visual, scene.lighting)
             prompts.append((f"scene {n + 1} (not drawn yet)", built))
     show_image_prompts(out, prompts)
     return 0

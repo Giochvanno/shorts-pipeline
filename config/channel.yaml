@@ -87,7 +87,7 @@ models:
         # room for longer thinking, so the estimate stays at or above the bill.
         usd_per_image: 0.05
         params: { resolution: "1K", thinking_level: medium, safety_tolerance: "4", enable_web_search: false }
-        licence: "Nano Banana 2.1 via fal.ai: commercial use per the fal model page (checked 2026-11-16)"
+        licence: "Nano Banana 2.1 via fal.ai: commercial use per the fal model page; Gemini API terms (2026-03-23): Google claims no ownership of generated content; SynthID mark (checked 2026-11-17)"
       bytedance/seedream/v5.5/text-to-image:
         label: Seedream 5.5
         size: pixels                 # 720x1280 = 921,600 px, the smallest size it takes

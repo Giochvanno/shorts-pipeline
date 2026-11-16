@@ -255,8 +255,11 @@ class VoiceConfig(_Strict):
 
 class VisualBible(_Strict):
     style_prefix: str = Field(min_length=1)
-    palette: list[HexColor] = Field(min_length=2, max_length=6)
-    lighting: str = Field(min_length=1)
+    palette: list[HexColor] = Field(min_length=2, max_length=6)  # for captions and code
+    # The palette in words for image prompts: to an image model "#2E4057" is text to draw.
+    # None: the hex codes go into the prompt (how videos up to 10 were made).
+    colours: str | None = Field(default=None, min_length=1, max_length=200)
+    lighting: str = Field(min_length=1)  # the default, for scenes that name no light
     camera: str = Field(min_length=1)
     extra_forbidden: list[str]
     max_attempts_per_scene: int = Field(ge=1, le=3)
