@@ -64,7 +64,7 @@ def test_colour_words_replace_the_hex_codes(series: SeriesConfig) -> None:
 
     prompt = visuals.build_image_prompt(worded, "a wombat on a hill")
 
-    assert "colour palette deep slate blue, warm sand" in prompt
+    assert "colours: deep slate blue, warm sand" in prompt
     assert "#" not in prompt
 
 
@@ -83,7 +83,17 @@ def test_prompt_is_bible_plus_scene(series: SeriesConfig) -> None:
 
     assert prompt.startswith(series.visual_bible.style_prefix.strip().rstrip("."))
     assert "a lighthouse on a cliff" in prompt
-    assert series.visual_bible.palette[0] in prompt
+    assert f"colours: {series.visual_bible.colours}" in prompt
+    assert "#" not in prompt  # hex codes are text to an image model
+
+
+def test_without_colour_words_the_hex_palette_stays(series: SeriesConfig) -> None:
+    """How videos up to 10 were made: their frames stay cached."""
+    hex_only = series.visual_bible.model_copy(update={"colours": None})
+
+    prompt = visuals.build_image_prompt(hex_only, "a lighthouse on a cliff")
+
+    assert "colour palette " + ", ".join(series.visual_bible.palette) in prompt
     # Forbidden words stay out of the prompt: naming them invites the model to draw them.
     for word in ("text", "letters", "hands", "fingers"):
         assert not re.search(rf"\b{word}\b", prompt, re.IGNORECASE), word

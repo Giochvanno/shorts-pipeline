@@ -100,7 +100,7 @@ pipeline/            core library
                      tts/elevenlabs.py: voice + per-character timings, cost from credits
                      images/fal.py: frames on fal (720x1280); size, price and params per model
                      vision/claude_cli.py: frame review (subject, text, blood-like marks) via claude -p
-docs/decisions/      why things are the way they are (image-model.md: three rounds, one model)
+docs/decisions/      one file per decision (ADR): image-model.md, three rounds of comparison, numbers
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

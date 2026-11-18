@@ -44,13 +44,17 @@ def looks_like_image(data: bytes, fmt: str) -> bool:
 def build_image_prompt(bible: VisualBible, scene_visual: str, lighting: str | None = None) -> str:
     """Style + the scene + its light (the bible's default if the scene names none) + camera
     + colours (in words when the bible has them: hex codes are text to an image model)."""
-    colours = bible.colours.strip() if bible.colours else ", ".join(bible.palette)
+    colours = (
+        f"colours: {bible.colours.strip()}"
+        if bible.colours
+        else "colour palette " + ", ".join(bible.palette)  # videos up to 10: keeps their cache
+    )
     parts = [
         bible.style_prefix.strip().rstrip("."),
         scene_visual.strip().rstrip("."),
         f"lighting: {(lighting or bible.lighting).strip()}",
         f"camera: {bible.camera}",
-        "colour palette " + colours,
+        colours,
     ]
     return ". ".join(parts) + "."
 
