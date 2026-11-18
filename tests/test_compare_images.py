@@ -302,8 +302,8 @@ def test_spend_goes_to_the_month_not_to_the_video(runs: Path) -> None:
 
     with StateStore(runs / "pipeline.db") as store:
         after = Ledger(store).spend(1)
-    assert after.video_usd == before.video_usd
-    assert after.month_usd - before.month_usd == pytest.approx(plan_price(count))
+    assert after.video_cash == before.video_cash
+    assert after.month_cash - before.month_cash == pytest.approx(plan_price(count))
     assert after.month_calls - before.month_calls == count * len(MODELS)
 
 
@@ -363,10 +363,10 @@ def test_a_spent_month_stops_drawing(runs: Path) -> None:
                 step="elsewhere",
                 provider="fal",
                 model="x",
-                billing="api",
+                billing="cash",
                 unit="images",
                 units=1,
-                cost_usd=load_channel().budget.max_monthly_usd,
+                cost_usd=load_channel().budget.max_cash_monthly_usd,
                 ts=datetime.now(UTC).isoformat(timespec="milliseconds"),
             )
         )

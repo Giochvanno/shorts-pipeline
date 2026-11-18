@@ -10,7 +10,7 @@ The goal is **stability you can measure**, not a demo:
 | Target (Shorts v1)                       | Status |
 | ---------------------------------------- | ------ |
 | ≥ 95 % of runs finish without a human    | —      |
-| ≤ $0.50 per video                        | —      |
+| ≤ $0.75 cash per video (frames stage)    | —      |
 | ≤ 5 min of my time per day               | —      |
 
 Real-provider numbers will come from `python -m pipeline soak --runs 50` in stage 2.
@@ -41,15 +41,15 @@ uv run pytest                # tests
 
 uv run python -m pipeline run --series fact-of-day               # -> runs/1/video.mp4
 uv run python -m pipeline run --series fact-of-day --chaos 0.3   # same, with failing fakes
-uv run python -m pipeline status                                 # where every video stands
-uv run python -m pipeline resume --video 1                       # continue a failed video
+uv run python -m pipeline status                                 # where every video stands, cash and credit
+uv run python -m pipeline resume --video 1                       # continue a failed or paused video
 uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
 uv sync --extra stt                                              # once: faster-whisper (voice check)
 uv run python -m pipeline run --series fact-of-day --real tts --real stt   # real voice, checked
 uv run python -m pipeline recheck --video 6     # re-run the voice check on kept takes (free)
 uv run python -m pipeline.watch --topic "why octopuses have three hearts"  # watch Claude write a script
 uv run python -m pipeline.watch --video 10      # what Claude got and gave for a past video (free)
-uv run python -m pipeline run --series fact-of-day --real images   # FLUX frames on fal (~$0.025 each)
+uv run python -m pipeline run --series fact-of-day --real images   # Nano Banana 2.1 frames on fal (~$0.04 each)
 uv run python -m pipeline.compare_images --video 10 --style "..."  # plan and price of a model comparison (free)
 uv run python -m pipeline.compare_images --video 10 --style "..." --pay  # draw it: grid + report, max $1
 uv run pytest -m live                                            # live checks (real services)
@@ -78,10 +78,11 @@ assets/fonts/        Montserrat ExtraBold + its OFL licence (hook and captions d
 config/              channel.yaml (models, budget, upload) + series/*.yaml (style bibles)
 pipeline/            core library
   config.py          typed config schema; hard rules live in code, not YAML
-  state.py           SQLite: step statuses, restart from the failed step, crash recovery
+  state.py           SQLite: step statuses (paused_budget too), restart where it stopped, crash recovery
   runner.py          step order, retries with backoff + jitter, alerts, JSON logs
   artifacts.py       atomic writes + cache keyed by input hash (never pay twice)
-  costs.py           cost ledger: every adapter call recorded, budget checked before paid calls
+  costs.py           cost ledger in two accounts, cash and subscription credit; limits checked
+                     before every call, a reached limit pauses the video (resume after raising it)
   ass.py             word-by-word captions as ASS subtitles (libass), spoken word highlighted
   cli.py             run / resume / status / check-config
   steps/             idea, script, voice, visuals, captions, render, qa, publish
@@ -99,6 +100,7 @@ pipeline/            core library
                      tts/elevenlabs.py: voice + per-character timings, cost from credits
                      images/fal.py: frames on fal (720x1280); size, price and params per model
                      vision/claude_cli.py: frame review (subject, text, blood-like marks) via claude -p
+docs/decisions/      why things are the way they are (image-model.md: three rounds, one model)
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

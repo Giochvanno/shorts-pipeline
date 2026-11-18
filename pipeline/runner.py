@@ -6,6 +6,7 @@ For each step that is not done yet:
                |
                +-- retryable error -> wait (exponential backoff + jitter) -> try again
                +-- non-retryable error, or out of attempts -> failed + alert, stop
+               +-- a spending limit reached -> paused_budget + alert, stop
 
 What makes it survive failures:
 - Done steps are skipped, and their outputs are cached, so a rerun never pays twice.
@@ -14,7 +15,8 @@ What makes it survive failures:
   at startup and resumes exactly there.
 - Every decision is logged as a JSON line, which the soak report will aggregate.
 - Every adapter call is recorded in the cost ledger and checked against the budget
-  first; a reached limit stops the video (BudgetExceeded is never retried).
+  first. A reached limit pauses the video (never retried: waiting does not add money);
+  `resume` continues from that step once the limit is raised.
 """
 
 import random
@@ -28,7 +30,7 @@ from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterErro
 from pipeline.adapters.notify import Notifier
 from pipeline.adapters.registry import Adapters
 from pipeline.config import BudgetConfig, SeriesConfig, load_series
-from pipeline.costs import BudgetExceeded, Ledger, metered
+from pipeline.costs import CASH_LIKE, CREDIT, BudgetExceeded, Ledger, metered
 from pipeline.logs import get_logger
 from pipeline.state import StateError, StateStore, StepStatus
 from pipeline.steps import captions, render, script, visuals, voice
@@ -79,13 +81,24 @@ class VideoReport:
     video_id: int
     status: StepStatus
     steps: tuple[StepOutcome, ...]
-    cost_usd: float  # from the ledger: every paid call, failed attempts included
+    # From the ledger: every call, failed attempts included, in its two accounts.
+    cash_usd: float
+    credit_usd: float
     elapsed_s: float
     output: Path | None
 
     @property
+    def cost_usd(self) -> float:
+        """The full price: cash + subscription credit."""
+        return self.cash_usd + self.credit_usd
+
+    @property
     def failed_step(self) -> StepOutcome | None:
         return next((s for s in self.steps if s.status == StepStatus.FAILED), None)
+
+    @property
+    def paused_step(self) -> StepOutcome | None:
+        return next((s for s in self.steps if s.status == StepStatus.PAUSED_BUDGET), None)
 
 
 class Runner:
@@ -107,12 +120,12 @@ class Runner:
         wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._store = store
-        self.ledger = Ledger(store, budget, clock=wall_clock)
+        self._notifier = notifier
+        self.ledger = Ledger(store, budget, clock=wall_clock, warn=self._warn)
         self._adapters = metered(adapters, self.ledger)
         self._runs_dir = runs_dir
         self._policy = policy or RetryPolicy()
         self._steps = tuple(steps)
-        self._notifier = notifier
         self._load_series = series_loader
         self._language = language
         self._sleep = sleep
@@ -167,17 +180,23 @@ class Runner:
             video_id=video_id,
             status=status,
             steps=tuple(outcomes),
-            cost_usd=self._store.video_cost(video_id),
+            cash_usd=self._store.spent(CASH_LIKE, video_id=video_id)[0],
+            credit_usd=self._store.spent((CREDIT,), video_id=video_id)[0],
             elapsed_s=self._clock() - started,
             output=output if status == StepStatus.DONE and output.exists() else None,
         )
         log.info(
             "video_finished",
-            extra={"video_id": video_id, "status": str(status), "cost_usd": report.cost_usd},
+            extra={
+                "video_id": video_id,
+                "status": str(status),
+                "cash_usd": report.cash_usd,
+                "credit_usd": report.credit_usd,
+            },
         )
-        failed = report.failed_step
-        if failed is not None:
-            self._alert(record.series_id, record.topic, video_id, failed)
+        stopped = report.failed_step or report.paused_step
+        if stopped is not None:
+            self._alert(record.series_id, record.topic, video_id, stopped)
         return report
 
     def _run_step(self, ctx: StepContext, name: str, fn: StepFn) -> StepOutcome:
@@ -189,7 +208,13 @@ class Runner:
                 with self.ledger.scope(video_id, name):
                     result = fn(ctx)
             except BudgetExceeded as e:
-                error, retryable = str(e), False  # waiting does not add money
+                # Not a failure, and never retried: waiting does not add money.
+                self._store.pause_step(video_id, name, str(e))
+                log.warning(
+                    "step_paused_budget",
+                    extra={"video_id": video_id, "step": name, "reason": str(e)},
+                )
+                return StepOutcome(name, StepStatus.PAUSED_BUDGET, attempt, 0.0, False, str(e))
             except PermanentAdapterError as e:
                 error, retryable = f"{type(e).__name__}: {e}", False  # needs a human
             except StepError as e:
@@ -245,11 +270,22 @@ class Runner:
             self._sleep(delay)
         raise AssertionError("unreachable: the loop always returns")
 
-    def _alert(self, series_id: str, topic: str, video_id: int, failed: StepOutcome) -> None:
+    def _alert(self, series_id: str, topic: str, video_id: int, stopped: StepOutcome) -> None:
         if self._notifier is None:
             return
+        resume = f"python -m pipeline resume --video {video_id}"
+        if stopped.status == StepStatus.PAUSED_BUDGET:
+            self._notifier.send(
+                f"video {video_id} ({series_id}: {topic!r}) paused at '{stopped.step}':"
+                f" {stopped.error}\nraise the limit in config/channel.yaml, then: {resume}"
+            )
+            return
         self._notifier.send(
-            f"video {video_id} ({series_id}: {topic!r}) failed at '{failed.step}' after "
-            f"{failed.attempts} attempt(s): {failed.error}\n"
-            f"resume: python -m pipeline resume --video {video_id}"
+            f"video {video_id} ({series_id}: {topic!r}) failed at '{stopped.step}' after "
+            f"{stopped.attempts} attempt(s): {stopped.error}\nresume: {resume}"
         )
+
+    def _warn(self, message: str) -> None:
+        log.warning("budget_warning", extra={"message": message})
+        if self._notifier is not None:
+            self._notifier.send(message)

@@ -8,10 +8,14 @@ Allowed step transitions (anything else raises InvalidTransitionError):
 
     pending -> running -> done
                   |
-                  v
-               failed -> running   (retry)
+                  +--> failed -> running          (retry)
+                  |
+                  +--> paused_budget -> running   (resume, once the limit is raised)
 
     any -> pending                 (reset_from: "redo the script", "redo visuals")
+
+paused_budget is not a failure: nothing broke, a spending limit was reached before
+a paid call. The video waits for a person to raise the limit, then resumes there.
 
 Every transition is one UPDATE whose WHERE clause checks the current status,
 so a step can never be, say, finished twice.
@@ -36,6 +40,7 @@ class StepStatus(StrEnum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    PAUSED_BUDGET = "paused_budget"
 
 
 class StateError(Exception):
@@ -64,7 +69,7 @@ class CostRecord:
     step: str | None
     provider: str
     model: str
-    billing: str  # fake | subscription | api
+    billing: str  # fake | cash | subscription_credit (see pipeline/costs.py)
     unit: str  # tokens | characters | images
     units: float
     cost_usd: float
@@ -122,6 +127,50 @@ MIGRATIONS: tuple[str, ...] = (
         cost_usd  REAL NOT NULL CHECK (cost_usd >= 0),
         ts        TEXT NOT NULL
     );
+    CREATE INDEX costs_by_video ON costs(video_id);
+    CREATE INDEX costs_by_ts ON costs(ts);
+    """,
+    # 3: a step can pause on a spending limit; spend is kept in two accounts, cash and
+    # subscription credit. SQLite cannot change a CHECK, so both tables are rebuilt.
+    """
+    CREATE TABLE steps_v3 (
+        video_id     INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        name         TEXT NOT NULL,
+        position     INTEGER NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'running', 'done', 'failed', 'paused_budget')),
+        attempts     INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        error        TEXT,
+        started_at   TEXT,
+        finished_at  TEXT,
+        PRIMARY KEY (video_id, name),
+        UNIQUE (video_id, position)
+    );
+    INSERT INTO steps_v3 SELECT video_id, name, position, status, attempts, error,
+                                started_at, finished_at FROM steps;
+    DROP TABLE steps;
+    ALTER TABLE steps_v3 RENAME TO steps;
+    CREATE INDEX steps_by_status ON steps(status);
+
+    CREATE TABLE costs_v3 (
+        id        INTEGER PRIMARY KEY,
+        video_id  INTEGER REFERENCES videos(id) ON DELETE CASCADE,
+        step      TEXT,
+        provider  TEXT NOT NULL,
+        model     TEXT NOT NULL,
+        billing   TEXT NOT NULL CHECK (billing IN ('fake', 'cash', 'subscription_credit')),
+        unit      TEXT NOT NULL,
+        units     REAL NOT NULL CHECK (units >= 0),
+        cost_usd  REAL NOT NULL CHECK (cost_usd >= 0),
+        ts        TEXT NOT NULL
+    );
+    INSERT INTO costs_v3 SELECT id, video_id, step, provider, model,
+           CASE billing WHEN 'api' THEN 'cash'
+                        WHEN 'subscription' THEN 'subscription_credit'
+                        ELSE billing END,
+           unit, units, cost_usd, ts FROM costs;
+    DROP TABLE costs;
+    ALTER TABLE costs_v3 RENAME TO costs;
     CREATE INDEX costs_by_video ON costs(video_id);
     CREATE INDEX costs_by_ts ON costs(ts);
     """,
@@ -238,7 +287,7 @@ class StateStore:
     def video_status(self, video_id: int) -> StepStatus:
         """Derived from steps, never stored, so it cannot disagree with them."""
         statuses = {s.status for s in self.steps(video_id)}
-        for status in (StepStatus.RUNNING, StepStatus.FAILED):
+        for status in (StepStatus.RUNNING, StepStatus.PAUSED_BUDGET, StepStatus.FAILED):
             if status in statuses:
                 return status
         if statuses == {StepStatus.DONE}:
@@ -286,6 +335,32 @@ class StateStore:
         total: float = self._conn.execute(sql, params).fetchone()[0]
         return total
 
+    def spent(
+        self,
+        billing: Sequence[str],
+        *,
+        video_id: int | None = None,
+        since: str | None = None,
+        unit: str | None = None,
+    ) -> tuple[float, int]:
+        """Sum and count of the calls billed to these accounts, narrowed as asked."""
+        where = [f"billing IN ({', '.join('?' for _ in billing)})"]
+        params: list[int | str] = list(billing)
+        if video_id is not None:
+            where.append("video_id = ?")
+            params.append(video_id)
+        if since is not None:
+            where.append("ts >= ?")
+            params.append(since)
+        if unit is not None:
+            where.append("unit = ?")
+            params.append(unit)
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*) FROM costs WHERE " + " AND ".join(where),
+            params,
+        ).fetchone()
+        return float(row[0]), int(row[1])
+
     def cost_since(self, ts: str) -> tuple[float, int]:
         """Total spend and number of calls from `ts` (ISO, UTC) until now."""
         row = self._conn.execute(
@@ -296,7 +371,7 @@ class StateStore:
     # --- step transitions ---------------------------------------------------------
 
     def start_step(self, video_id: int, name: str) -> StepRecord:
-        """pending/failed -> running. Only the next step in order may start."""
+        """pending/failed/paused_budget -> running. Only the next step in order may start."""
         upcoming = self.next_step(video_id)
         if upcoming is None or upcoming.name != name:
             expected = upcoming.name if upcoming else "nothing (video is done)"
@@ -304,7 +379,7 @@ class StateStore:
         self._transition(
             video_id,
             name,
-            allowed_from=(StepStatus.PENDING, StepStatus.FAILED),
+            allowed_from=(StepStatus.PENDING, StepStatus.FAILED, StepStatus.PAUSED_BUDGET),
             sql="status = 'running', attempts = attempts + 1, error = NULL,"
             " started_at = :now, finished_at = NULL",
         )
@@ -328,6 +403,17 @@ class StateStore:
             allowed_from=(StepStatus.RUNNING,),
             sql="status = 'failed', error = :error, finished_at = :now",
             error=error,
+        )
+        return self.step(video_id, name)
+
+    def pause_step(self, video_id: int, name: str, reason: str) -> StepRecord:
+        """running -> paused_budget: a spending limit stopped it before a paid call."""
+        self._transition(
+            video_id,
+            name,
+            allowed_from=(StepStatus.RUNNING,),
+            sql="status = 'paused_budget', error = :error, finished_at = :now",
+            error=reason,
         )
         return self.step(video_id, name)
 

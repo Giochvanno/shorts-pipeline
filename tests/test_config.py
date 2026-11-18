@@ -50,7 +50,13 @@ def test_real_channel_config_is_valid() -> None:
     assert channel.mode.real_ports == ()  # in the repo nothing may spend money by default
     assert channel.models.llm.api_fallback is False  # separate money: off unless enabled
     assert channel.upload.privacy == "private"  # test phase: never public by accident
-    assert channel.budget.max_cost_per_video_usd == pytest.approx(0.5)
+    # Limits for the frames stage, not ahead of it (a redraw loop must hit a wall).
+    assert channel.budget.max_cash_per_video_usd == pytest.approx(0.75)
+    assert channel.budget.max_image_cash_per_video_usd == pytest.approx(0.55)
+    assert channel.budget.max_cash_monthly_usd == pytest.approx(20.0)
+    images = channel.models.images
+    assert images.primary.model == "google/nano-banana-2.1"
+    assert images.fallback is not None and images.fallback.provider == "fal"
 
 
 def test_every_real_series_is_valid() -> None:
@@ -140,7 +146,14 @@ def test_unknown_provider_is_rejected(config_dir: Path) -> None:
         (lambda d: _fal(d, "fal-ai/flux/dev").pop("usd_per_megapixel"), "exactly one"),
         (lambda d: _fal(d, "fal-ai/flux/dev")["params"].update(seed=1), "may not set seed"),
         (lambda d: _fal(d, "fal-ai/flux/dev").update(size="9:16"), "size"),
-        (lambda d: d["models"]["images"]["fal_models"].pop("fal-ai/flux/dev"), "no fal_models"),
+        (
+            lambda d: d["models"]["images"]["fal_models"].pop("google/nano-banana-2.1"),
+            "no fal_models entry for the primary",
+        ),
+        (
+            lambda d: d["models"]["images"]["fal_models"].pop("fal-ai/flux-2"),
+            "no fal_models entry for the fallback",
+        ),
     ],
     ids=[
         "real-voice-fake-check",
@@ -153,6 +166,7 @@ def test_unknown_provider_is_rejected(config_dir: Path) -> None:
         "image-param-overrides-adapter",
         "image-size-mode-typo",
         "primary-image-model-without-profile",
+        "fallback-image-model-without-profile",
     ],
 )
 def test_broken_channel_is_rejected(config_dir: Path, mutate: Mutator, message: str) -> None:

@@ -6,7 +6,10 @@
 - One frame in the series style, 720x1280: one megapixel, $0.025 for FLUX.1 [dev].
   Saved to runs/live/fal.png to look at; compare the charge on fal's billing page.
 - The same prompt and seed, drawn twice by the main and the fallback model: is it the
-  same frame? The cache and "draw that good frame again" rely on it. About $0.12:
+  same frame? The cache and "draw that good frame again" rely on it. The same frame
+  means no pixel visibly off (every channel within 8 of 255), not equal bytes:
+  Nano Banana 2.1 redraws the same picture with +-2 noise (2026-11-18: max difference
+  2, 99.4 % within 1), FLUX.2 [dev] to the bit. About $0.12:
   2 x $0.05 (Nano Banana 2.1) + 2 x $0.012 (FLUX.2 [dev]). Only this test:
       uv run pytest tests/live/test_fal_live.py -m live -s -k seed
 
@@ -90,6 +93,10 @@ def test_one_frame_in_the_series_style(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.seed == 1234
 
 
+# Off by more than this, a pixel is visibly different; within it, the frame is the same.
+SAME_FRAME_MAX_DIFF = 8
+
+
 def _pixels(image: bytes) -> bytes:
     """Raw RGB of an image, decoded by FFmpeg: equal pixels compare equal, whatever the PNG."""
     done = subprocess.run(
@@ -120,14 +127,16 @@ def test_the_same_seed_draws_the_same_frame(model: str, monkeypatch: pytest.Monk
     for n, result in enumerate((first, second), start=1):
         (out / f"{model.replace('/', '__')}_{n}.{result.format}").write_bytes(result.image)
     a, b = _pixels(first.image), _pixels(second.image)
-    same = sum(x == y for x, y in zip(a, b, strict=False))
-    share = same / max(len(a), len(b))
-    mean_diff = sum(abs(x - y) for x, y in zip(a, b, strict=False)) / max(len(a), 1)
+    assert len(a) == len(b), "the two frames differ in size"
+    diffs = [abs(x - y) for x, y in zip(a, b, strict=True)]
+    equal = diffs.count(0) / len(diffs)
+    worst = max(diffs)
     print(
-        f"\n{model}: seed {first.seed} twice -> {first.width}x{first.height}"
-        f" and {second.width}x{second.height}; identical bytes: {first.image == second.image};"
-        f" equal pixel values: {share:.1%}; mean difference {mean_diff:.2f} of 255"
+        f"\n{model}: seed {first.seed} twice -> {first.width}x{first.height};"
+        f" identical bytes: {first.image == second.image}; equal values: {equal:.1%};"
+        f" largest difference {worst} of 255; mean {sum(diffs) / len(diffs):.2f}"
         f"\nsaved: {out}"
     )
-    assert len(a) == len(b), "the two frames differ in size"
-    assert share > 0.99, f"{model}: the same seed drew a different frame ({share:.1%} equal)"
+    assert worst <= SAME_FRAME_MAX_DIFF, (
+        f"{model}: the same seed drew a different frame (a value off by {worst} of 255)"
+    )

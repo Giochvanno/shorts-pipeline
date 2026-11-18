@@ -65,13 +65,20 @@ class UploadConfig(_Strict):
 
 
 class BudgetConfig(_Strict):
-    max_cost_per_video_usd: float = Field(gt=0)
-    max_monthly_usd: float = Field(gt=0)
+    """Two accounts (pipeline/costs.py): cash, and the subscription's credit."""
+
+    max_cash_per_video_usd: float = Field(gt=0)
+    max_image_cash_per_video_usd: float = Field(gt=0)  # stops a loop that redraws frames
+    max_cash_monthly_usd: float = Field(gt=0)
+    max_subscription_credit_monthly_usd: float = Field(gt=0)
+    subscription_credit_warn_at: float = Field(default=0.8, gt=0, lt=1)  # share of the limit
 
     @model_validator(mode="after")
-    def _month_covers_a_video(self) -> Self:
-        if self.max_monthly_usd < self.max_cost_per_video_usd:
-            raise ValueError("max_monthly_usd must be at least max_cost_per_video_usd")
+    def _limits_nest(self) -> Self:
+        if self.max_cash_monthly_usd < self.max_cash_per_video_usd:
+            raise ValueError("max_cash_monthly_usd must be at least max_cash_per_video_usd")
+        if self.max_image_cash_per_video_usd > self.max_cash_per_video_usd:
+            raise ValueError("max_image_cash_per_video_usd cannot exceed max_cash_per_video_usd")
         return self
 
 
@@ -139,9 +146,10 @@ class ImageChain(_Strict):
     fal_models: dict[str, FalModel] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _primary_has_a_profile(self) -> Self:
-        if self.primary.provider == "fal" and self.primary.model not in self.fal_models:
-            raise ValueError(f"no fal_models entry for the primary model {self.primary.model!r}")
+    def _fal_models_have_a_profile(self) -> Self:
+        for role, ref in (("primary", self.primary), ("fallback", self.fallback)):
+            if ref is not None and ref.provider == "fal" and ref.model not in self.fal_models:
+                raise ValueError(f"no fal_models entry for the {role} model {ref.model!r}")
         return self
 
 

@@ -81,7 +81,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--topic", help="default: the first unused topic of the series")
     add_run_options(run)
 
-    resume = sub.add_parser("resume", help="continue a failed video from the failed step")
+    resume = sub.add_parser(
+        "resume", help="continue a failed or paused video from the step where it stopped"
+    )
     resume.add_argument("--video", type=int, required=True)
     add_run_options(resume)
 
@@ -183,7 +185,15 @@ def _print_report(report: VideoReport, series_id: str, topic: str) -> None:
         if step.error:
             print(f"           {step.error}")
     where = f" -> {report.output}" if report.output else ""
-    print(f"{report.status} in {report.elapsed_s:.1f} s, paid ${report.cost_usd:.3f}{where}")
+    print(f"{report.status} in {report.elapsed_s:.1f} s{where}")
+    print(f"  cash:                ${report.cash_usd:.3f}")
+    print(f"  subscription credit: ${report.credit_usd:.3f}")
+    print(f"  full cost:           ${report.cost_usd:.3f}")
+    if report.status == StepStatus.PAUSED_BUDGET:
+        print(
+            "raise the limit in config/channel.yaml, then:"
+            f" python -m pipeline resume --video {report.video_id}"
+        )
 
 
 def run_command(args: argparse.Namespace) -> int:
@@ -236,19 +246,27 @@ def status_command(args: argparse.Namespace) -> int:
             print("no videos yet")
             return 0
         budget = load_channel().budget
-        spend = Ledger(store, budget).spend()
+        ledger = Ledger(store, budget)
+        spend = ledger.spend()
         print(
-            f"this month: ${spend.month_usd:.3f} of ${budget.max_monthly_usd:.2f}"
-            f" ({spend.month_calls} calls), per video limit ${budget.max_cost_per_video_usd:.2f}"
+            f"this month  cash:                ${spend.month_cash:.3f}"
+            f" of ${budget.max_cash_monthly_usd:.2f}  ({spend.month_calls} calls in all)\n"
+            f"            subscription credit: ${spend.month_credit:.3f}"
+            f" of ${budget.max_subscription_credit_monthly_usd:.2f}\n"
+            f"            full cost:           ${spend.month_full:.3f}\n"
+            f"per video   cash limit ${budget.max_cash_per_video_usd:.2f},"
+            f" of it images ${budget.max_image_cash_per_video_usd:.2f}\n"
         )
+        print(f"{'id':>4}  {'state':<13} {'cash':>7}  {'credit':>7}  {'full':>7}  series  topic")
         for video in videos:
             steps = store.steps(video.id)
             current = next((s for s in steps if s.status != StepStatus.DONE), None)
             where = "" if current is None else f"  at {current.name} ({current.status})"
             state = store.video_status(video.id)
-            paid = store.video_cost(video.id)
+            paid = ledger.spend(video.id)
             print(
-                f"{video.id:>4}  {state:<8} ${paid:.3f}  {video.series_id}  {video.topic!r}{where}"
+                f"{video.id:>4}  {state:<13} ${paid.video_cash:>6.3f}  ${paid.video_credit:>6.3f}"
+                f"  ${paid.video_full:>6.3f}  {video.series_id}  {video.topic!r}{where}"
             )
             if current is not None and current.error:
                 print(f"        last error: {current.error}")
