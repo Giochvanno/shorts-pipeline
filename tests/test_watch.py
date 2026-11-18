@@ -58,7 +58,7 @@ def test_live_shows_the_request_the_writing_the_checks_and_the_image_prompts() -
     assert fake.requests == [expected]  # the very request the script step sends
     assert "--- thinking ---" in text and "Hook first." in text
     assert "verdict: ACCEPTED" in text
-    assert text.count("Clean digital natural history painting") >= 5  # one image prompt per scene
+    assert text.count("Clean digital painting") >= 5  # one image prompt per scene
     assert "25,000 tokens in" in text
 
 

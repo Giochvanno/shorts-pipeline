@@ -34,10 +34,15 @@ voice:
   speed: 1.0
 
 visual_bible:
-  style_prefix: >-          # [YOURS] prepended to every image prompt
-    Clean digital natural history painting, smooth painterly brushwork,
+  # [YOURS] prepended to every image prompt. No "natural history": it invited printed
+  # Latin captions (docs/decisions/image-model.md, round 3).
+  style_prefix: >-
+    Clean digital painting, smooth painterly brushwork,
     soft natural colours, true-to-life anatomy
-  palette: ["#2E4057", "#E8D8B0", "#C1666B", "#F5F1E6"]   # [YOURS]
+  palette: ["#2E4057", "#E8D8B0", "#C1666B", "#F5F1E6"]   # [YOURS] captions use it
+  # [YOURS] the palette in words for image prompts, as accents: written as a plain list,
+  # the model painted everything in it (rose eucalyptus, a rose boulder).
+  colours: natural colours with accents of deep slate blue, warm sand and muted rose
   lighting: soft diffused daylight, gentle shadows
   camera: medium shot, eye level, one clear subject large in the upper two thirds of the frame, calm plain ground below  # captions sit low; frames are animated later
   extra_forbidden: [watermark, logo]   # added on top of the hard rules in code

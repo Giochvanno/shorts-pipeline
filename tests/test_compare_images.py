@@ -258,7 +258,7 @@ def test_a_tagged_variant_draws_into_its_own_folder_next_to_the_earlier_rows(
     bodies = fake.bodies()
     assert "lighting: cool moonlight at night" in str(bodies[1]["prompt"])
     assert "lighting: cool moonlight" not in str(bodies[0]["prompt"])
-    assert all("colour palette deep slate blue, warm sand" in str(b["prompt"]) for b in bodies)
+    assert all("colours: deep slate blue, warm sand" in str(b["prompt"]) for b in bodies)
     assert not any("#2E4057" in str(b["prompt"]) for b in bodies)
     variant = runs / "1" / "compare-style3"
     assert len(list((variant / model_dir(MODELS[0])).glob("scene_*.png"))) == count
