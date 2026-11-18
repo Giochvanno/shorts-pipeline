@@ -23,10 +23,18 @@ upload:
   synthetic_media: true     # YouTube "altered or synthetic content" disclosure
 
 budget:
-  # Checked before every paid call; reaching a limit stops the video with an alert.
-  # Counts per-call spend (API tokens, images, ...), not fixed monthly subscriptions.
-  max_cost_per_video_usd: 0.50
-  max_monthly_usd: 10.00          # calendar month, UTC
+  # Two accounts, both checked before every call (pipeline/costs.py).
+  # cash: money per call (fal, ElevenLabs, the Anthropic API). Reaching a limit pauses the
+  # video (paused_budget) with an alert; raise the limit, then `resume`. Set for the current
+  # stage, not ahead of it: a loop that keeps redrawing frames has to hit a wall.
+  max_cash_per_video_usd: 0.75
+  max_image_cash_per_video_usd: 0.55   # ~11 Nano Banana 2.1 frames: 7 scenes + 4 retries
+  max_cash_monthly_usd: 20.00          # calendar month, UTC; test stage (launch: ~40-50)
+  # subscription_credit: what `claude -p` reports a call would cost on the API. Paid from
+  # the Claude subscription's monthly credit, not from cash: never part of a video's cash
+  # limit, but when the credit runs out scripts stop, hence its own limit and a warning.
+  max_subscription_credit_monthly_usd: 18.00
+  subscription_credit_warn_at: 0.8     # alert once at 80 % of it
 
 # Model IDs live here and only here (enforced by tests/test_architecture.py).
 # Real adapters re-check IDs and prices when they are connected.
@@ -50,8 +58,13 @@ models:
     fallback: null
   images:
     timeout_s: 120           # one frame takes seconds; a cold start can take longer
-    primary:  { provider: fal,       model: fal-ai/flux/dev }
-    fallback: { provider: replicate, model: black-forest-labs/flux-dev }
+    # Chosen in three rounds on video 10 (docs/decisions/image-model.md): the only model
+    # with the right subject in all 7 scenes. One model per video, never mixed: a retry is
+    # the same model with the next seed. The fallback is for when the main model is
+    # unavailable; it runs on fal from open weights, while every Nano Banana is a proxy
+    # to Google, so one Google outage takes out them all.
+    primary:  { provider: fal, model: google/nano-banana-2.1 }
+    fallback: { provider: fal, model: fal-ai/flux-2 }
     # How each fal model is called and what it costs (fal model pages, checked 2026-11-16).
     # All carry fal's "Commercial use" badge. Prices are the upper bound of the bill.
     fal_models:

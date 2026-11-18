@@ -233,7 +233,7 @@ def test_garbage_output_is_transient() -> None:
 # --- end to end: the runner with claude_cli on a fake process -----------------------
 
 
-def test_runner_records_claude_cli_calls_as_subscription(tmp_path: Path) -> None:
+def test_runner_records_claude_cli_calls_as_subscription_credit(tmp_path: Path) -> None:
     topic = "how glass is made"
     structure = script_step.choose_structure(load_series("fact-of-day"), 1)
     script_json = fake_script(
@@ -263,9 +263,15 @@ def test_runner_records_claude_cli_calls_as_subscription(tmp_path: Path) -> None
         (cost,) = store.costs(video)
 
     assert report.status == StepStatus.DONE
-    assert (cost.provider, cost.billing, cost.unit) == ("claude_cli", "subscription", "tokens")
+    assert (cost.provider, cost.billing, cost.unit) == (
+        "claude_cli",
+        "subscription_credit",
+        "tokens",
+    )
     assert cost.cost_usd == pytest.approx(0.02)
-    assert report.cost_usd == pytest.approx(0.02)
+    assert report.cash_usd == 0.0
+    assert report.credit_usd == pytest.approx(0.02)
+    assert report.cost_usd == pytest.approx(0.02)  # the full price counts both accounts
 
 
 # --- real recorded output (tests/fixtures/claude_cli, Claude Code 2.1.322) ----------

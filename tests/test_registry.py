@@ -30,7 +30,8 @@ def test_fake_adapters_are_offline_and_free() -> None:
 
 def test_an_image_provider_without_an_adapter_is_refused() -> None:
     models = load_channel().models
-    on_replicate = models.images.model_copy(update={"primary": models.images.fallback})
+    replicate = type(models.images.primary)(provider="replicate", model="acme/flux-dev")
+    on_replicate = models.images.model_copy(update={"primary": replicate})
     models = models.model_copy(update={"images": on_replicate})
 
     with pytest.raises(NotImplementedError, match="only fal"):
