@@ -51,8 +51,8 @@ def test_real_channel_config_is_valid() -> None:
     assert channel.models.llm.api_fallback is False  # separate money: off unless enabled
     assert channel.upload.privacy == "private"  # test phase: never public by accident
     # Limits for the frames stage, not ahead of it (a redraw loop must hit a wall).
-    assert channel.budget.max_cash_per_video_usd == pytest.approx(0.75)
-    assert channel.budget.max_image_cash_per_video_usd == pytest.approx(0.55)
+    assert channel.budget.max_cash_per_video_usd == pytest.approx(0.90)
+    assert channel.budget.max_image_cash_per_video_usd == pytest.approx(0.75)
     assert channel.budget.max_cash_monthly_usd == pytest.approx(20.0)
     images = channel.models.images
     assert images.primary.model == "google/nano-banana-2.1"

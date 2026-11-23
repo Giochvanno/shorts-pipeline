@@ -29,10 +29,11 @@ from pathlib import Path
 from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.notify import Notifier
 from pipeline.adapters.registry import Adapters
+from pipeline.adapters.vision import FrameVerdict
 from pipeline.config import BudgetConfig, SeriesConfig, load_series
 from pipeline.costs import CASH_LIKE, CREDIT, BudgetExceeded, Ledger, metered
 from pipeline.logs import get_logger
-from pipeline.state import StateError, StateStore, StepStatus
+from pipeline.state import ReviewRecord, StateError, StateStore, StepStatus
 from pipeline.steps import captions, render, script, visuals, voice
 from pipeline.steps.base import StepContext, StepError, StepResult
 
@@ -122,6 +123,7 @@ class Runner:
         self._store = store
         self._notifier = notifier
         self.ledger = Ledger(store, budget, clock=wall_clock, warn=self._warn)
+        self._wall_clock = wall_clock
         self._adapters = metered(adapters, self.ledger)
         self._runs_dir = runs_dir
         self._policy = policy or RetryPolicy()
@@ -164,6 +166,9 @@ class Runner:
             stt=self._adapters.stt,
             language=self._language,
             vision=self._adapters.vision,
+            on_review=lambda scene, attempt, verdict: self._keep_review(
+                video_id, scene, attempt, verdict
+            ),
         )
         outcomes: list[StepOutcome] = []
         for name, fn in self._steps:
@@ -284,6 +289,19 @@ class Runner:
         self._notifier.send(
             f"video {video_id} ({series_id}: {topic!r}) failed at '{stopped.step}' after "
             f"{stopped.attempts} attempt(s): {stopped.error}\nresume: {resume}"
+        )
+
+    def _keep_review(self, video_id: int, scene: int, attempt: int, verdict: FrameVerdict) -> None:
+        self._store.record_review(
+            ReviewRecord(
+                video_id=video_id,
+                scene=scene,
+                attempt=attempt,
+                reasons=tuple(verdict.reasons()),
+                provider=verdict.provider,
+                model=verdict.model,
+                ts=self._wall_clock().isoformat(timespec="milliseconds"),
+            )
         )
 
     def _warn(self, message: str) -> None:

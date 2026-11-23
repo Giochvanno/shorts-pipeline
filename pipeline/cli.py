@@ -8,6 +8,8 @@ python -m pipeline status
 
 import argparse
 import sys
+from collections import Counter
+from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from pipeline.adapters.chaos import ChaosConfig
 from pipeline.adapters.errors import PermanentAdapterError, TransientAdapterError
 from pipeline.adapters.notify.console import ConsoleNotifier
 from pipeline.adapters.registry import ALL_FAKE, build_adapters
+from pipeline.adapters.vision import REASONS
 from pipeline.config import (
     DEFAULT_CONFIG_DIR,
     PORTS,
@@ -31,7 +34,7 @@ from pipeline.costs import Ledger
 from pipeline.env import load_env
 from pipeline.logs import get_logger, log_to_file
 from pipeline.runner import RetryPolicy, Runner, VideoReport
-from pipeline.state import StateStore, StepStatus, UnknownVideoError
+from pipeline.state import ReviewRecord, StateStore, StepStatus, UnknownVideoError
 from pipeline.steps import voice as voice_step
 from pipeline.steps.base import StepError
 
@@ -169,7 +172,25 @@ def _runner(args: argparse.Namespace, store: StateStore) -> Runner | None:
     )
 
 
-def _print_report(report: VideoReport, series_id: str, topic: str) -> None:
+def review_summary(reviews: Sequence[ReviewRecord]) -> str | None:
+    """ "11 frames reviewed, 3 turned down: text 2, extra_object 1"; None if none were.
+
+    One frame can be turned down for more than one reason.
+    """
+    if not reviews:
+        return None
+    down = [r for r in reviews if not r.accepted]
+    counts = Counter(code for r in down for code in r.reasons)
+    order = sorted(counts, key=lambda c: (-counts[c], REASONS.index(c) if c in REASONS else 99))
+    line = (
+        f"{len(reviews)} frame{'' if len(reviews) == 1 else 's'} reviewed, {len(down)} turned down"
+    )
+    return line + (": " + ", ".join(f"{c} {counts[c]}" for c in order) if order else "")
+
+
+def _print_report(
+    report: VideoReport, series_id: str, topic: str, reviews: Sequence[ReviewRecord] = ()
+) -> None:
     print(f"video {report.video_id}  {series_id}  {topic!r}")
     for step in report.steps:
         tries = (
@@ -184,6 +205,9 @@ def _print_report(report: VideoReport, series_id: str, topic: str) -> None:
             print(f"           {line_note}")
         if step.error:
             print(f"           {step.error}")
+    summary = review_summary(reviews)
+    if summary is not None:
+        print(f"frame review: {summary}")
     where = f" -> {report.output}" if report.output else ""
     print(f"{report.status} in {report.elapsed_s:.1f} s{where}")
     print(f"  cash:                ${report.cash_usd:.3f}")
@@ -225,7 +249,7 @@ def run_command(args: argparse.Namespace) -> int:
                     return 2
                 series_id, topic = record.series_id, record.topic
             report = runner.run_video(video_id)
-            _print_report(report, series_id, topic)
+            _print_report(report, series_id, topic, store.reviews(video_id))
             return 0 if report.status == StepStatus.DONE else 1
     except ConfigError as e:
         print(f"error  {e}", file=sys.stderr)
@@ -270,6 +294,15 @@ def status_command(args: argparse.Namespace) -> int:
             )
             if current is not None and current.error:
                 print(f"        last error: {current.error}")
+            summary = review_summary(store.reviews(video.id))
+            if summary is not None:
+                print(f"        frame review: {summary}")
+        # The fake reviewer accepts everything: counting it would hide the real rate.
+        real = [r for r in store.reviews() if r.provider != "fake"]
+        summary = review_summary(real)
+        if summary is not None:
+            videos_reviewed = len({r.video_id for r in real})
+            print(f"\nframe review, {videos_reviewed} video(s) with a real reviewer: {summary}")
     return 0
 
 

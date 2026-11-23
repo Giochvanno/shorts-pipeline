@@ -455,4 +455,4 @@ def test_status_shows_spend(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert f"${paid:.3f}" in out  # per video
     for line in ("cash:", "subscription credit:", "full cost:", "calls in all"):
         assert line in out
-    assert "cash limit $0.75, of it images $0.55" in out
+    assert "cash limit $0.90, of it images $0.75" in out

@@ -56,7 +56,12 @@ Fill every field:
 - subject_seen: the main subject you see, in a few plain words.
 - right_subject: true only if it is recognisably the subject the scene asks for. An animal \
 must look like that species, not a similar one; a shape the scene names (a cube, a spiral) \
-must have that shape. An eye-catching object the scene does not mention makes it false.
+must have that shape.
+- extra_seen: an eye-catching object the scene does not mention, one a viewer would notice \
+as a thing of its own, such as a second animal or a brightly lit landscape. Dim or blurred \
+shapes in the background do not count, nor do details that belong to the setting the scene \
+names (people on a street, furniture in a room, a hanger on a hook). Empty if there is none.
+- extra_object: true if there is such an object.
 - text_seen: every letter, number, signature, handwriting-like scribble, watermark, logo or \
 label anywhere in the frame. Look closely at the corners and edges. Empty if there is none.
 - has_text: true if there is any such mark.
@@ -75,6 +80,8 @@ class _Answer(BaseModel):
 
     subject_seen: str = Field(max_length=300)
     right_subject: bool
+    extra_seen: str = Field(max_length=300)
+    extra_object: bool
     text_seen: str = Field(max_length=300)
     has_text: bool
     subject_position: Literal["upper", "middle", "lower", "none"]
@@ -90,6 +97,8 @@ def answer_schema() -> str:
         "properties": {
             "subject_seen": {"type": "string"},
             "right_subject": {"type": "boolean"},
+            "extra_seen": {"type": "string"},
+            "extra_object": {"type": "boolean"},
             "text_seen": {"type": "string"},
             "has_text": {"type": "boolean"},
             "subject_position": {"type": "string", "enum": ["upper", "middle", "lower", "none"]},

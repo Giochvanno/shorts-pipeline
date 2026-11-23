@@ -27,6 +27,7 @@ def test_run_makes_a_shorts_video_even_under_chaos(
     assert (info.width, info.height) == (1080, 1920)
     assert "done in" in out
     assert "$0.000" in out
+    assert "frame review: " in out  # the fake reviewer looked at every frame
     log = (runs / LOG_NAME).read_text(encoding="utf-8")
     assert log.count('"event": "step_done"') == len(DEFAULT_STEPS)
 

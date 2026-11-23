@@ -32,6 +32,8 @@ REQUEST = FrameCheckRequest(
 ANSWER: dict[str, Any] = {
     "subject_seen": "a brown wombat on grass",
     "right_subject": True,
+    "extra_seen": "",
+    "extra_object": False,
     "text_seen": "",
     "has_text": False,
     "subject_position": "middle",
@@ -136,6 +138,7 @@ def test_a_clean_answer_is_accepted_with_its_cost() -> None:
     ("changes", "problem"),
     [
         ({"right_subject": False, "subject_seen": "a hamster"}, "wrong subject: a hamster"),
+        ({"extra_object": True, "extra_seen": "a moon surface below"}, "extra object: a moon"),
         ({"has_text": True, "text_seen": "a signature, bottom left"}, "text in the frame"),
         ({"unwanted": True, "unwanted_seen": "red patches like blood"}, "unwanted content"),
         ({"style_matches": False}, "off-style"),

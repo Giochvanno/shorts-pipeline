@@ -1,5 +1,6 @@
 """What every step receives and returns."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from pipeline.adapters.images import ImageClient
 from pipeline.adapters.llm import LlmClient
 from pipeline.adapters.stt import Transcriber
 from pipeline.adapters.tts import TtsClient
-from pipeline.adapters.vision import FrameReviewer
+from pipeline.adapters.vision import FrameReviewer, FrameVerdict
 from pipeline.config import SeriesConfig
 
 
@@ -32,6 +33,8 @@ class StepContext:
     stt: Transcriber
     language: str = "en"  # of scripts, voice and captions (channel.yaml)
     vision: FrameReviewer | None = None  # the frame review; None: frames are not reviewed
+    # Told about every review (scene, attempt, verdict): the runner keeps them for status.
+    on_review: Callable[[int, int, FrameVerdict], None] | None = None
     # Bumped by "redo script" / "redo visuals": a new revision means a new cache key.
     revision: int = 0
 

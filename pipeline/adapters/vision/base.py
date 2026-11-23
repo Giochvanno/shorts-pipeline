@@ -11,6 +11,16 @@ from typing import Literal, Protocol
 
 Position = Literal["upper", "middle", "lower", "none"]
 ImageType = Literal["image/png", "image/jpeg", "image/webp"]
+# Why a frame is turned down, as codes for the statistics (status counts them).
+Reason = Literal["wrong_subject", "extra_object", "text", "unwanted", "off_style"]
+REASONS: tuple[Reason, ...] = ("wrong_subject", "extra_object", "text", "unwanted", "off_style")
+_LABELS: dict[Reason, str] = {
+    "wrong_subject": "wrong subject",
+    "extra_object": "extra object",
+    "text": "text in the frame",
+    "unwanted": "unwanted content",
+    "off_style": "off-style",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +35,8 @@ class FrameCheckRequest:
 class FrameVerdict:
     subject_seen: str  # what the reviewer sees, in its own words
     right_subject: bool
+    extra_seen: str  # a prominent object the scene does not ask for; empty if none
+    extra_object: bool
     text_seen: str  # letters, signatures, watermarks; empty if none
     has_text: bool
     subject_position: Position
@@ -35,22 +47,35 @@ class FrameVerdict:
     model: str
     cost_usd: float
 
-    def problems(self) -> list[str]:
-        """Why the frame must be drawn again; empty when it can be animated."""
-        found = []
+    def findings(self) -> list[tuple[Reason, str]]:
+        """Why the frame must be drawn again, with what was seen; empty when it can be
+        animated."""
+        found: list[tuple[Reason, str]] = []
         if not self.right_subject:
-            found.append(f"wrong subject: {self.subject_seen or 'unclear'}")
+            found.append(("wrong_subject", self.subject_seen or "unclear"))
+        if self.extra_object:
+            found.append(("extra_object", self.extra_seen or "unnamed"))
         if self.has_text:
-            found.append(f"text in the frame: {self.text_seen or 'unreadable marks'}")
+            found.append(("text", self.text_seen or "unreadable marks"))
         if self.unwanted:
-            found.append(f"unwanted content: {self.unwanted_seen or 'unnamed'}")
+            found.append(("unwanted", self.unwanted_seen or "unnamed"))
         if not self.style_matches:
-            found.append("off-style")
+            found.append(("off_style", ""))
         return found
+
+    def reasons(self) -> list[Reason]:
+        return [reason for reason, _ in self.findings()]
+
+    def problems(self) -> list[str]:
+        """The findings in words, for the report and the rejected frame's json."""
+        return [
+            f"{_LABELS[reason]}: {seen}" if seen else _LABELS[reason]
+            for reason, seen in self.findings()
+        ]
 
     @property
     def accepted(self) -> bool:
-        return not self.problems()
+        return not self.findings()
 
 
 class FrameReviewer(Protocol):

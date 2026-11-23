@@ -231,6 +231,8 @@ def ClaudeCliReviewerOnFakeProcess() -> FrameReviewer:
     answer = {
         "subject_seen": "a lighthouse on a cliff",
         "right_subject": True,
+        "extra_seen": "",
+        "extra_object": False,
         "text_seen": "",
         "has_text": False,
         "subject_position": "upper",

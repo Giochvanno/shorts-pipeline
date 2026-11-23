@@ -9,6 +9,8 @@ def clean_verdict(request: FrameCheckRequest) -> FrameVerdict:
     return FrameVerdict(
         subject_seen=request.scene[:60],
         right_subject=True,
+        extra_seen="",
+        extra_object=False,
         text_seen="",
         has_text=False,
         subject_position="middle",
