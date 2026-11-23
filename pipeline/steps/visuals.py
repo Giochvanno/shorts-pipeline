@@ -1,8 +1,8 @@
 """Step `visuals`: one frame per scene = style bible + scene + its light.
 
 Each new frame goes to the frame review (the vision port: Claude in real mode)
-before it is kept. A frame turned down for a wrong subject, text, blood-like marks
-or an off-style look is set aside in `rejected_frames/` with the reasons, and the
+before it is kept. A frame turned down for a wrong subject, an extra object, text,
+blood-like marks or an off-style look is set aside in `rejected_frames/` with the reasons, and the
 same model draws the scene again with the next seed, up to
 `max_attempts_per_scene` frames. One model per video: never another model for the
 retry, its style would differ.
@@ -132,8 +132,10 @@ def _review_meta(verdict: FrameVerdict | None) -> dict[str, Any] | None:
         return None
     return {
         "accepted": verdict.accepted,
+        "reasons": verdict.reasons(),
         "problems": verdict.problems(),
         "subject_seen": verdict.subject_seen,
+        "extra_seen": verdict.extra_seen,
         "subject_position": verdict.subject_position,
         "text_seen": verdict.text_seen,
         "unwanted_seen": verdict.unwanted_seen,
@@ -183,6 +185,8 @@ def _settle(ctx: StepContext, frame: Path, key: str, scene: str) -> FrameVerdict
     """
     meta = read_meta(frame) or {}
     verdict = _review(ctx, scene, frame.read_bytes())
+    if verdict is not None and ctx.on_review is not None:
+        ctx.on_review(int(meta["scene"]), int(meta["attempt"]), verdict)
     if verdict is None or verdict.accepted:
         write_meta(
             frame,

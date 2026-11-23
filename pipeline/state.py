@@ -77,6 +77,23 @@ class CostRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewRecord:
+    """One frame review: accepted, or turned down for these reason codes."""
+
+    video_id: int
+    scene: int  # 0-based
+    attempt: int  # 1 = the video's seed, 2 = the next seed, ...
+    reasons: tuple[str, ...]  # empty when accepted (codes: pipeline/adapters/vision/base.py)
+    provider: str
+    model: str
+    ts: str
+
+    @property
+    def accepted(self) -> bool:
+        return not self.reasons
+
+
+@dataclass(frozen=True, slots=True)
 class StepRecord:
     video_id: int
     name: str
@@ -173,6 +190,20 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE costs_v3 RENAME TO costs;
     CREATE INDEX costs_by_video ON costs(video_id);
     CREATE INDEX costs_by_ts ON costs(ts);
+    """,
+    # 4: every frame review, so the reasons frames are turned down can be counted.
+    """
+    CREATE TABLE frame_reviews (
+        id        INTEGER PRIMARY KEY,
+        video_id  INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+        scene     INTEGER NOT NULL CHECK (scene >= 0),
+        attempt   INTEGER NOT NULL CHECK (attempt >= 1),
+        reasons   TEXT NOT NULL,  -- comma-separated codes; empty = accepted
+        provider  TEXT NOT NULL,
+        model     TEXT NOT NULL,
+        ts        TEXT NOT NULL
+    );
+    CREATE INDEX frame_reviews_by_video ON frame_reviews(video_id);
     """,
 )
 
@@ -367,6 +398,38 @@ class StateStore:
             "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*) FROM costs WHERE ts >= ?", (ts,)
         ).fetchone()
         return float(row[0]), int(row[1])
+
+    # --- frame reviews ------------------------------------------------------------
+
+    def record_review(self, review: ReviewRecord) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO frame_reviews (video_id, scene, attempt, reasons, provider, model,"
+                " ts) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    review.video_id,
+                    review.scene,
+                    review.attempt,
+                    ",".join(review.reasons),
+                    review.provider,
+                    review.model,
+                    review.ts,
+                ),
+            )
+
+    def reviews(self, video_id: int | None = None) -> list[ReviewRecord]:
+        sql, params = "SELECT * FROM frame_reviews", []
+        if video_id is not None:
+            sql, params = sql + " WHERE video_id = ?", [video_id]
+        rows = self._conn.execute(sql + " ORDER BY id", params).fetchall()
+        return [
+            ReviewRecord(
+                r["video_id"], r["scene"], r["attempt"],
+                tuple(code for code in r["reasons"].split(",") if code),
+                r["provider"], r["model"], r["ts"],
+            )
+            for r in rows
+        ]  # fmt: skip
 
     # --- step transitions ---------------------------------------------------------
 

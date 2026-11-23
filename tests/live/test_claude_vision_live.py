@@ -25,6 +25,7 @@ from pipeline.adapters.vision.claude_cli import ClaudeCliReviewer
 from pipeline.artifacts import read_meta
 from pipeline.config import load_channel, load_series
 from pipeline.media import run_ffmpeg
+from pipeline.steps import script, visuals
 from pipeline.steps.render import font_path
 
 pytestmark = pytest.mark.live
@@ -32,6 +33,8 @@ pytestmark = pytest.mark.live
 FIELDS = (
     "subject_seen",
     "right_subject",
+    "extra_seen",
+    "extra_object",
     "text_seen",
     "has_text",
     "subject_position",
@@ -42,6 +45,7 @@ FIELDS = (
 
 REPO = Path(__file__).resolve().parents[2]
 COMPARE = REPO / "runs" / "10" / "compare"
+RUN_12 = REPO / "runs" / "12"
 # (folder, scene index, what the eye saw in the first comparison)
 SCORED = [
     ("fal-ai__flux__dev", 5, "text: signature bottom left"),
@@ -63,6 +67,7 @@ def _show(label: str, verdict: FrameVerdict) -> None:
     print(
         f"\n{label}\n  sees: {verdict.subject_seen!r}  right={verdict.right_subject}"
         f"  position={verdict.subject_position}  style={verdict.style_matches}"
+        f"\n  extra={verdict.extra_object} {verdict.extra_seen!r}"
         f"\n  text={verdict.has_text} {verdict.text_seen!r}"
         f"  unwanted={verdict.unwanted} {verdict.unwanted_seen!r}"
         f"\n  -> {'ACCEPTED' if verdict.accepted else 'REJECTED: ' + '; '.join(verdict.problems())}"
@@ -132,3 +137,29 @@ def test_frames_scored_by_eye(reviewer: ClaudeCliReviewer) -> None:
     out.write_text(json.dumps(saved, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"\nsaved: {out}")
     assert saved
+
+
+def test_an_extra_object_is_its_own_reason(reviewer: ClaudeCliReviewer) -> None:
+    """Video 12, scene 2: Earth and the Sun in black space. Try 1 added a brightly lit
+    cratered moon surface: turned down as a wrong subject before extra_object existed. The
+    kept try 2 has only a dim dark curve at the bottom, which the review let through.
+
+    The first wording ("large ... a planet surface") turned down the dim curve as well:
+    an example in the instructions pulls the model towards it."""
+    added = RUN_12 / "rejected_frames" / "scene_01_try1.png"
+    kept = RUN_12 / "frames" / "scene_01.png"
+    if not (added.exists() and kept.exists()):
+        pytest.skip("video 12 is not on disk")
+    bible = load_series("fact-of-day").visual_bible
+    scene = script.load(RUN_12).scenes[1]
+    text = visuals.review_text(bible, scene.visual, scene.lighting)
+    verdicts = {}
+    for label, frame in (("moon surface added", added), ("as asked", kept)):
+        image = frame.read_bytes()
+        request = FrameCheckRequest(image, media_type_of(image), text, bible.style_prefix.strip())
+        verdicts[label] = reviewer.review(request)
+        _show(f"video 12 scene 2, {label}", verdicts[label])
+
+    assert verdicts["moon surface added"].right_subject  # Earth, Sun, orbit: all there
+    assert "extra_object" in verdicts["moon surface added"].reasons()
+    assert verdicts["as asked"].accepted

@@ -21,18 +21,20 @@ from pipeline.adapters.llm.fake import FakeLlm
 from pipeline.adapters.registry import Adapters
 from pipeline.adapters.stt.fake import FakeTranscriber
 from pipeline.adapters.tts.fake import FakeTts
-from pipeline.adapters.vision import FrameCheckRequest, FrameVerdict
+from pipeline.adapters.vision import REASONS, FrameCheckRequest, FrameVerdict
 from pipeline.adapters.vision.fake import FakeReviewer, clean_verdict
 from pipeline.artifacts import read_meta, write_meta
+from pipeline.cli import DB_NAME, main, review_summary
 from pipeline.config import BudgetConfig
 from pipeline.costs import Ledger, MeteredReviewer
 from pipeline.runner import DEFAULT_STEPS, RetryPolicy, Runner, StepFn
-from pipeline.state import StateStore, StepStatus
+from pipeline.state import ReviewRecord, StateStore, StepStatus
 from pipeline.steps import script, visuals, voice
 from pipeline.steps.base import StepContext, StepError, StepResult
 
 TEXT = {"has_text": True, "text_seen": "scribbles on the wall, top right"}
 WRONG = {"right_subject": False, "subject_seen": "a hamster"}
+EXTRA = {"extra_object": True, "extra_seen": "a cratered moon surface below the planet"}
 
 
 def turned_down(request: FrameCheckRequest, **changes: Any) -> FrameVerdict:
@@ -121,6 +123,7 @@ def test_the_verdict_is_kept_in_the_frame_meta(scripted: StepContext) -> None:
     assert meta is not None
     assert meta["review"]["accepted"] is True
     assert meta["review"]["problems"] == []
+    assert meta["review"]["reasons"] == []
     assert (meta["review"]["provider"], meta["review"]["model"]) == ("fake", "fake-vision")
     assert meta["review"]["subject_position"] == "middle"  # informational, never a rejection
 
@@ -176,6 +179,7 @@ def test_a_turned_down_frame_is_set_aside_and_the_scene_drawn_with_the_next_seed
     report = json.loads((rejected / "scene_00_try1.json").read_text(encoding="utf-8"))
     assert report["seed"] == base
     assert report["review"]["problems"] == ["text in the frame: scribbles on the wall, top right"]
+    assert report["review"]["reasons"] == ["text"]
     assert result.notes == (
         "scene 1: the review turned down 1 frame(s), try 2 kept"
         " (text in the frame: scribbles on the wall, top right)",
@@ -468,3 +472,98 @@ def test_a_failed_review_is_not_billed(store: StateStore) -> None:
         metered.review(REQUEST)
 
     assert store.costs(video) == []
+
+
+# --- reasons, counted -------------------------------------------------------------------
+
+
+def test_every_reason_has_its_own_code_and_words() -> None:
+    everything = turned_down(
+        REQUEST, **WRONG, **EXTRA, **TEXT, unwanted=True, unwanted_seen="red", style_matches=False
+    )
+
+    assert everything.reasons() == list(REASONS)
+    assert everything.problems() == [
+        "wrong subject: a hamster",
+        "extra object: a cratered moon surface below the planet",
+        "text in the frame: scribbles on the wall, top right",
+        "unwanted content: red",
+        "off-style",
+    ]
+
+
+def test_an_extra_object_alone_turns_the_frame_down() -> None:
+    verdict = turned_down(REQUEST, **EXTRA)
+
+    assert verdict.right_subject
+    assert not verdict.accepted
+    assert verdict.reasons() == ["extra_object"]
+
+
+def test_the_runner_keeps_every_review_with_its_reasons(store: StateStore, tmp_path: Path) -> None:
+    runner = _runner(store, tmp_path, _adapters(FakeImages(), Picky("old map", 1, **EXTRA)))
+    video = runner.create_video("fact-of-day", "why octopuses have three hearts")
+
+    assert runner.run_video(video).status == StepStatus.DONE
+
+    reviews = store.reviews(video)
+    scenes = len(script.load(tmp_path / "runs" / str(video)).scenes)
+    assert len(reviews) == scenes + 1
+    (down,) = [r for r in reviews if not r.accepted]
+    assert (down.scene, down.attempt, down.reasons) == (1, 1, ("extra_object",))
+    redrawn = [r for r in reviews if r.scene == 1]
+    assert [(r.attempt, r.accepted) for r in redrawn] == [(1, False), (2, True)]
+    assert {(r.provider, r.model) for r in reviews} == {("fake", "fake-vision")}
+
+
+def test_a_cached_video_adds_no_reviews(store: StateStore, tmp_path: Path) -> None:
+    runner = _runner(store, tmp_path, _adapters(FakeImages(), FakeReviewer()))
+    video = runner.create_video("fact-of-day", "why octopuses have three hearts")
+    runner.run_video(video)
+    before = len(store.reviews(video))
+
+    store.reset_from(video, "visuals")
+    runner.run_video(video)
+
+    assert len(store.reviews(video)) == before
+
+
+def _review(video: int, scene: int, *reasons: str, provider: str = "claude_cli") -> ReviewRecord:
+    return ReviewRecord(video, scene, 1, reasons, provider, "m", "2026-11-23T00:00:00+00:00")
+
+
+def test_the_summary_counts_frames_and_reasons_most_common_first() -> None:
+    reviews = [
+        _review(1, 0),
+        _review(1, 1, "text"),
+        _review(1, 2, "extra_object"),
+        _review(1, 3, "text", "off_style"),  # one frame, two reasons
+    ]
+
+    assert review_summary(reviews) == (
+        "4 frames reviewed, 3 turned down: text 2, extra_object 1, off_style 1"
+    )
+    assert review_summary([_review(1, 0)]) == "1 frame reviewed, 0 turned down"
+    assert review_summary([]) is None
+
+
+def test_status_shows_reviews_per_video_and_the_real_rate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with StateStore(tmp_path / DB_NAME) as store:
+        real = store.create_video("fact-of-day", "leap years", ["visuals"])
+        fake = store.create_video("fact-of-day", "octopus", ["visuals"])
+        for review in (_review(real, 0), _review(real, 1, "text"), _review(real, 1)):
+            store.record_review(review)
+        for scene in range(6):
+            store.record_review(_review(fake, scene, provider="fake"))
+
+    assert main(["status", "--runs-dir", str(tmp_path)]) == 0
+
+    out = capsys.readouterr().out
+    assert "frame review: 3 frames reviewed, 1 turned down: text 1" in out
+    assert "frame review: 6 frames reviewed, 0 turned down" in out
+    # The fake reviewer accepts everything: left out of the rate.
+    assert out.rstrip().endswith(
+        "frame review, 1 video(s) with a real reviewer: 3 frames reviewed, 1 turned down: text 1"
+    )

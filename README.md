@@ -41,7 +41,7 @@ uv run pytest                # tests
 
 uv run python -m pipeline run --series fact-of-day               # -> runs/1/video.mp4
 uv run python -m pipeline run --series fact-of-day --chaos 0.3   # same, with failing fakes
-uv run python -m pipeline status                                 # where every video stands, cash and credit
+uv run python -m pipeline status                                 # where every video stands, cash, credit, frames turned down
 uv run python -m pipeline resume --video 1                       # continue a failed or paused video
 uv run python -m pipeline run --series fact-of-day --real llm    # real Claude via `claude -p`
 uv sync --extra stt                                              # once: faster-whisper (voice check)
@@ -79,7 +79,8 @@ assets/fonts/        Montserrat ExtraBold + its OFL licence (hook and captions d
 config/              channel.yaml (models, budget, upload) + series/*.yaml (style bibles)
 pipeline/            core library
   config.py          typed config schema; hard rules live in code, not YAML
-  state.py           SQLite: step statuses (paused_budget too), restart where it stopped, crash recovery
+  state.py           SQLite: step statuses (paused_budget too), restart where it stopped, crash recovery,
+                     every frame review with its reasons (counted by status)
   runner.py          step order, retries with backoff + jitter, alerts, JSON logs
   artifacts.py       atomic writes + cache keyed by input hash (never pay twice)
   costs.py           cost ledger in two accounts, cash and subscription credit; limits checked
@@ -104,6 +105,7 @@ pipeline/            core library
                      images/fal.py: frames on fal (720x1280); size, price and params per model
                      vision/claude_cli.py: frame review (subject, text, blood-like marks) via claude -p
 docs/decisions/      one file per decision (ADR): image-model.md, three rounds of comparison, numbers
+docs/backlog.md      decided for later: a cheaper reviewer model, scenes drawn in parallel
 tests/               unit, architecture, chaos and render tests
 .github/workflows/   CI: lint + types on Linux, tests on Linux and Windows
 ```

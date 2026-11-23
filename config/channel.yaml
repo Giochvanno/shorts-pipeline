@@ -28,8 +28,9 @@ budget:
   # cash: money per call (fal, ElevenLabs, the Anthropic API). Reaching a limit pauses the
   # video (paused_budget) with an alert; raise the limit, then `resume`. Set for the current
   # stage, not ahead of it: a loop that keeps redrawing frames has to hit a wall.
-  max_cash_per_video_usd: 0.75
-  max_image_cash_per_video_usd: 0.55   # ~11 Nano Banana 2.1 frames: 7 scenes + 4 retries
+  max_cash_per_video_usd: 0.90         # images + voice (~$0.05); revisit with the video step
+  max_image_cash_per_video_usd: 0.75   # ~15 Nano Banana 2.1 frames: 8 scenes + 7 redraws
+                                       # (the review turned down 3 of 11 frames in video 12)
   max_cash_monthly_usd: 20.00          # calendar month, UTC; test stage (launch: ~40-50)
   # subscription_credit: what `claude -p` reports a call would cost on the API. Paid from
   # the Claude subscription's monthly credit, not from cash: never part of a video's cash
