@@ -30,6 +30,9 @@ from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsClient, TtsRequest
 from pipeline.adapters.tts.elevenlabs import ElevenLabsTts
 from pipeline.adapters.tts.fake import FakeTts
+from pipeline.adapters.vision import FrameCheckRequest, FrameReviewer, media_type_of
+from pipeline.adapters.vision.claude_cli import ClaudeCliReviewer
+from pipeline.adapters.vision.fake import FakeReviewer
 
 
 def ClaudeCliOnFakeProcess() -> LlmClient:
@@ -218,3 +221,66 @@ def test_transcriber_accepts_expected_words_for_a_clip(stt: Transcriber, tmp_pat
     transcript = stt.transcribe(audio, language="en", expect=TTS_REQUEST.text)
 
     assert 0 <= transcript.no_speech_prob <= 1
+
+
+# --- frame review -----------------------------------------------------------------
+
+
+def ClaudeCliReviewerOnFakeProcess() -> FrameReviewer:
+    """The real reviewer with subprocess replaced: CI has no CLI and no login."""
+    answer = {
+        "subject_seen": "a lighthouse on a cliff",
+        "right_subject": True,
+        "text_seen": "",
+        "has_text": False,
+        "subject_position": "upper",
+        "style_matches": True,
+        "unwanted_seen": "",
+        "unwanted": False,
+    }
+    events = [
+        {"type": "system", "subtype": "init", "tools": ["StructuredOutput"]},
+        {
+            "type": "result",
+            "subtype": "success",
+            "structured_output": answer,
+            "total_cost_usd": 0.02,
+        },
+    ]
+    stdout = "\n".join(json.dumps(e) for e in events).encode() + b"\n"
+
+    def run(args: list[str], **_kwargs: object) -> "subprocess.CompletedProcess[bytes]":
+        return subprocess.CompletedProcess(args, 0, stdout, b"")
+
+    return ClaudeCliReviewer("model-from-config", run=run, which=lambda _name: "claude")
+
+
+REVIEWER_IMPLEMENTATIONS: list[Callable[[], FrameReviewer]] = [
+    FakeReviewer,
+    ClaudeCliReviewerOnFakeProcess,
+]
+
+
+@pytest.fixture(params=REVIEWER_IMPLEMENTATIONS, ids=lambda f: f.__name__)
+def reviewer(request: pytest.FixtureRequest) -> FrameReviewer:
+    factory: Callable[[], FrameReviewer] = request.param
+    return factory()
+
+
+def test_reviewer_answers_every_field_the_visuals_step_reads(reviewer: FrameReviewer) -> None:
+    frame = FakeImages().generate(IMAGE_REQUEST).image
+    request = FrameCheckRequest(
+        image=frame,
+        media_type=media_type_of(frame),
+        scene="a lighthouse on a cliff. Light: dusk",
+        style="clean digital painting",
+    )
+
+    verdict = reviewer.review(request)
+
+    assert verdict.accepted == (verdict.problems() == [])
+    assert verdict.accepted  # both answer "clean" for a clean frame
+    assert verdict.subject_position in {"upper", "middle", "lower", "none"}
+    assert verdict.provider == reviewer.provider
+    assert verdict.model == reviewer.model
+    assert verdict.cost_usd >= 0

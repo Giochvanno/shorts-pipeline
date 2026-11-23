@@ -7,9 +7,16 @@ on its own, so real providers are switched on one at a time.
 
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosLlm, ChaosTts, Sleep
+from pipeline.adapters.chaos import (
+    ChaosConfig,
+    ChaosImages,
+    ChaosLlm,
+    ChaosReviewer,
+    ChaosTts,
+    Sleep,
+)
 from pipeline.adapters.http import Transport, urllib_transport
 from pipeline.adapters.images import ImageClient
 from pipeline.adapters.images.fake import FakeImages
@@ -24,18 +31,22 @@ from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsClient
 from pipeline.adapters.tts.elevenlabs import API_KEY_ENV, ElevenLabsTts
 from pipeline.adapters.tts.fake import FakeTts
+from pipeline.adapters.vision import FrameReviewer
+from pipeline.adapters.vision.claude_cli import ClaudeCliReviewer
+from pipeline.adapters.vision.fake import FakeReviewer
 from pipeline.config import ImageChain, LlmChain, ModeConfig, ModelsConfig, TtsChain
 
-ALL_FAKE = ModeConfig(llm="fake", tts="fake", images="fake", stt="fake")
+ALL_FAKE = ModeConfig(llm="fake", tts="fake", images="fake", stt="fake", vision="fake")
 
 
 @dataclass(frozen=True, slots=True)
 class Adapters:
-    llm_heavy: LlmClient  # script, critic, frame check
+    llm_heavy: LlmClient  # script, critic
     llm_light: LlmClient  # titles, tags, stock queries
     tts: TtsClient
-    images: ImageClient  # FLUX for scenes
+    images: ImageClient  # scene frames
     stt: Transcriber  # word timings for captions
+    vision: FrameReviewer = field(default_factory=FakeReviewer)  # the frame review
 
 
 def _real_llm(chain: LlmChain, models: ModelsConfig) -> LlmClient:
@@ -75,6 +86,14 @@ def fal_images(
     )
 
 
+def _real_vision(models: ModelsConfig) -> FrameReviewer:
+    """The frame review runs on the heavy model, through the same CLI as the script."""
+    chain = models.llm.heavy
+    if chain.primary.provider != "claude_cli":
+        raise NotImplementedError("the frame review runs through claude_cli only")
+    return ClaudeCliReviewer(chain.primary.model, timeout_s=models.llm.timeout_s)
+
+
 def _real_images(chain: ImageChain) -> ImageClient:
     return fal_images(chain, chain.primary.model)
 
@@ -103,6 +122,7 @@ def build_adapters(
     stt: Transcriber = (
         WhisperTranscriber(models.stt.primary.model) if mode.stt == "real" else FakeTranscriber()
     )
+    vision: FrameReviewer = _real_vision(models) if mode.vision == "real" else FakeReviewer()
 
     if chaos is not None:  # chaos only ever wraps fakes
         if mode.llm == "fake":
@@ -111,4 +131,8 @@ def build_adapters(
             tts = ChaosTts(tts, chaos, sleep)
         if mode.images == "fake":
             images = ChaosImages(images, chaos, sleep)
-    return Adapters(llm_heavy=heavy, llm_light=light, tts=tts, images=images, stt=stt)
+        if mode.vision == "fake":
+            vision = ChaosReviewer(vision, chaos, sleep)
+    return Adapters(
+        llm_heavy=heavy, llm_light=light, tts=tts, images=images, stt=stt, vision=vision
+    )

@@ -104,11 +104,12 @@ def test_every_adapter_call_is_recorded_per_step(store: StateStore, tmp_path: Pa
     scenes = len(script.load(tmp_path / "runs" / str(video)).scenes)
     steps = ("script", "voice", "visuals", "captions")
     by_step = {step: [r for r in rows if r.step == step] for step in steps}
-    # voice = synthesis + the check that listens to it; captions reuse what was heard.
-    assert [len(by_step[s]) for s in steps] == [1, 2, scenes, 0]
+    # voice = synthesis + the check that listens to it; visuals = a frame + its review
+    # per scene; captions reuse what was heard.
+    assert [len(by_step[s]) for s in steps] == [1, 2, 2 * scenes, 0]
     assert {r.unit for r in by_step["script"]} == {"tokens"}
     assert {r.unit for r in by_step["voice"]} == {"characters", "seconds"}
-    assert {r.unit for r in by_step["visuals"]} == {"images"}
+    assert {r.unit for r in by_step["visuals"]} == {"images", "frames"}
     assert {r.billing for r in rows} == {"fake"}
     assert all(r.units > 0 for r in rows)
 
@@ -311,6 +312,25 @@ def test_the_credit_warning_comes_once_when_80_percent_is_crossed(
 
     (warning,) = notifier.messages
     assert "subscription credit this month: $8.10 of $10.00 (81%)" in warning
+
+
+def test_the_credit_warning_reaches_the_notifier_during_a_run(
+    store: StateStore, tmp_path: Path
+) -> None:
+    """The runner logs the warning too: a log field named "message" used to crash the run."""
+    llm = CreditLlm(price=0.40)
+    notifier = RecordingNotifier()
+    adapters = Adapters(
+        llm_heavy=llm, llm_light=llm, tts=FakeTts(), images=FakeImages(), stt=FakeTranscriber()
+    )
+    runner = _runner(store, tmp_path, adapters, budget=budget(credit=0.45), notifier=notifier)
+
+    report = runner.run_video(runner.create_video("fact-of-day", TOPIC))
+
+    assert report.status == StepStatus.DONE
+    assert len(llm.calls) == 1  # the paid script was not lost to a crash and redone
+    (warning,) = notifier.messages
+    assert "subscription credit this month: $0.40 of $0.45" in warning
 
 
 def test_monthly_cash_limit_blocks_new_videos_but_last_month_does_not_count(

@@ -46,7 +46,7 @@ visual_bible:
   lighting: soft diffused daylight, gentle shadows
   camera: medium shot, eye level, one clear subject large in the upper two thirds of the frame, calm plain ground below  # captions sit low; frames are animated later
   extra_forbidden: [watermark, logo]   # added on top of the hard rules in code
-  max_attempts_per_scene: 3            # then fall back to stock
+  max_attempts_per_scene: 3            # frames per scene; all turned down -> the video stops for a person
 
 captions:
   font: Montserrat ExtraBold
@@ -64,3 +64,4 @@ qa:
   voice_max_redos: 2     # new takes after the first; then the video fails with an alert
   voice_relisten_max_missed: 0.10  # missed words are heard again only if at most 10 % are missing
   rejected_takes_max_mb: 20        # rejected takes kept per video to listen to; oldest go first
+  rejected_frames_max_mb: 30       # frames the review turned down, kept to look at

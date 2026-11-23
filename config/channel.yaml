@@ -10,6 +10,7 @@ mode:
   tts: fake
   images: fake
   stt: fake                 # real = faster-whisper on the CPU (free, `uv sync --extra stt`)
+  vision: fake              # real = Claude reviews every new frame (subscription credit)
 
 channel:
   name: "Fact of the Day (test)"
@@ -42,7 +43,7 @@ models:
   llm:
     timeout_s: 180          # one call; a hung CLI process is killed and retried
     api_fallback: false     # anthropic_api costs separate money: enable explicitly
-    heavy:                  # script, critic, frame check, weekly review
+    heavy:                  # script, critic, frame review, weekly review
       primary:  { provider: claude_cli,    model: claude-opus-5-5 }
       fallback: { provider: anthropic_api, model: claude-opus-5-5 }
     light:                  # titles, tags, stock search queries

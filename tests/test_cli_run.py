@@ -73,6 +73,21 @@ def test_real_voice_without_real_timings_is_refused_before_anything_runs(
         assert store.videos() == []
 
 
+def test_a_real_review_of_fake_frames_is_refused_before_anything_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fake frames are flat gradients: a real reviewer would turn every one down."""
+    monkeypatch.chdir(tmp_path)
+    args = ["run", "--series", "fact-of-day", "--runs-dir", str(tmp_path)]
+
+    code = main([*args, "--real", "vision"])
+
+    assert code == 2
+    assert "--real images --real vision" in capsys.readouterr().err
+    with StateStore(tmp_path / DB_NAME) as store:
+        assert store.videos() == []
+
+
 def test_chaos_is_refused_with_real_ports(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

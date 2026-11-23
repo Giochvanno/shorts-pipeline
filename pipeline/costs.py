@@ -37,6 +37,7 @@ from pipeline.adapters.llm import LlmClient, LlmRequest, LlmResponse
 from pipeline.adapters.registry import Adapters
 from pipeline.adapters.stt import Transcriber, Transcript
 from pipeline.adapters.tts import TtsClient, TtsRequest, TtsResult
+from pipeline.adapters.vision import FrameCheckRequest, FrameReviewer, FrameVerdict
 from pipeline.config import BudgetConfig
 from pipeline.state import CostRecord, StateStore
 
@@ -305,6 +306,32 @@ class MeteredTranscriber:
         return result
 
 
+class MeteredReviewer:
+    def __init__(self, inner: FrameReviewer, ledger: Ledger) -> None:
+        self.inner = inner
+        self._ledger = ledger
+
+    @property
+    def provider(self) -> str:
+        return self.inner.provider
+
+    @property
+    def model(self) -> str:
+        return self.inner.model
+
+    def review(self, request: FrameCheckRequest) -> FrameVerdict:
+        self._ledger.check(self.inner.provider, "frames")
+        verdict = self.inner.review(request)
+        self._ledger.record(
+            provider=verdict.provider,
+            model=verdict.model,
+            unit="frames",
+            units=1,
+            cost_usd=verdict.cost_usd,
+        )
+        return verdict
+
+
 def metered(adapters: Adapters, ledger: Ledger) -> Adapters:
     """The same adapter set, with every call checked against the budget and recorded."""
     heavy = MeteredLlm(adapters.llm_heavy, ledger)
@@ -319,4 +346,5 @@ def metered(adapters: Adapters, ledger: Ledger) -> Adapters:
         tts=MeteredTts(adapters.tts, ledger),
         images=MeteredImages(adapters.images, ledger),
         stt=MeteredTranscriber(adapters.stt, ledger),
+        vision=MeteredReviewer(adapters.vision, ledger),
     )

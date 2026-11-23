@@ -163,6 +163,7 @@ class Runner:
             images=self._adapters.images,
             stt=self._adapters.stt,
             language=self._language,
+            vision=self._adapters.vision,
         )
         outcomes: list[StepOutcome] = []
         for name, fn in self._steps:
@@ -286,6 +287,7 @@ class Runner:
         )
 
     def _warn(self, message: str) -> None:
-        log.warning("budget_warning", extra={"message": message})
+        # "message" is taken by logging itself: a record with it raises KeyError.
+        log.warning("budget_warning", extra={"warning": message})
         if self._notifier is not None:
             self._notifier.send(message)
