@@ -50,6 +50,7 @@ uv run python -m pipeline recheck --video 6     # re-run the voice check on kept
 uv run python -m pipeline.watch --topic "why octopuses have three hearts"  # watch Claude write a script
 uv run python -m pipeline.watch --video 10      # what Claude got and gave for a past video (free)
 uv run python -m pipeline run --series fact-of-day --real images   # Nano Banana 2.1 frames on fal (~$0.04 each)
+uv run python -m pipeline run --series fact-of-day --real images --real vision  # + Claude reviews each frame
 uv run python -m pipeline.compare_images --video 10 --style "..."  # plan and price of a model comparison (free)
 uv run python -m pipeline.compare_images --video 10 --style "..." --pay  # draw it: grid + report, max $1
 uv run pytest -m live                                            # live checks (real services)
@@ -88,6 +89,8 @@ pipeline/            core library
   steps/             idea, script, voice, visuals, captions, render, qa, publish
                      voice: synthesized, then checked by listening (whisper), redone if wrong
                      captions: script words + provider (or whisper) timings, aligned with a diff
+                     visuals: every new frame reviewed (--real vision); a turned-down one goes to
+                     runs/N/rejected_frames/ with the reasons and the scene is drawn with the next seed
   text.py            spoken form for comparing ("243" == "two hundred forty-three", "85 %")
   voice_check.py     did the voice say the script: compare, then re-listen to missed
                      stretches with guards against whisper echoing its prompt

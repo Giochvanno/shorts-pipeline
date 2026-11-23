@@ -175,7 +175,7 @@ class ModelsConfig(_Strict):
 Mode = Literal["fake", "real"]
 
 
-PORTS = ("llm", "tts", "images", "stt")
+PORTS = ("llm", "tts", "images", "stt", "vision")
 
 
 class ModeConfig(_Strict):
@@ -183,6 +183,7 @@ class ModeConfig(_Strict):
     tts: Mode
     images: Mode
     stt: Mode
+    vision: Mode = "fake"  # the frame review; fake accepts every frame
 
     @model_validator(mode="after")
     def _voice_and_its_check_go_together(self) -> Self:
@@ -193,6 +194,9 @@ class ModeConfig(_Strict):
                 "tts and stt are switched together: whisper checks the real voice,"
                 " the fake transcriber checks the fake one (--real tts --real stt)"
             )
+        # Fake frames are flat gradients: a real reviewer would reject every one of them.
+        if self.vision == "real" and self.images != "real":
+            raise ValueError("a real frame review needs real frames (--real images --real vision)")
         return self
 
     @property
@@ -293,6 +297,7 @@ class QaConfig(_Strict):
     # Missed stretches are heard again only if at most this share of words is missing.
     voice_relisten_max_missed: float = Field(ge=0.0, le=0.3)
     rejected_takes_max_mb: float = Field(ge=0, le=500)  # per video, oldest go first
+    rejected_frames_max_mb: float = Field(default=30, ge=0, le=500)  # the same, for frames
 
 
 class MusicConfig(_Strict):

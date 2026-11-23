@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosTts
+from pipeline.adapters.chaos import ChaosConfig, ChaosImages, ChaosReviewer, ChaosTts
 from pipeline.adapters.errors import PermanentAdapterError
 from pipeline.adapters.images import ImageRequest
 from pipeline.adapters.images.fal import API_KEY_ENV as FAL_KEY_ENV
@@ -14,6 +14,8 @@ from pipeline.adapters.registry import ALL_FAKE, build_adapters, fal_images
 from pipeline.adapters.stt.whisper import WhisperTranscriber
 from pipeline.adapters.tts import TtsRequest
 from pipeline.adapters.tts.elevenlabs import API_KEY_ENV, ElevenLabsTts
+from pipeline.adapters.vision.claude_cli import ClaudeCliReviewer
+from pipeline.adapters.vision.fake import FakeReviewer
 from pipeline.config import load_channel
 
 
@@ -25,7 +27,35 @@ def test_fake_adapters_are_offline_and_free() -> None:
         adapters.llm_light.provider,
         adapters.tts.provider,
         adapters.images.provider,
+        adapters.vision.provider,
     } == {"fake"}
+    assert isinstance(adapters.vision, FakeReviewer)
+
+
+def test_real_vision_is_claude_cli_on_the_heavy_model() -> None:
+    models = load_channel().models
+    adapters = build_adapters(models, mode=ALL_FAKE.model_copy(update={"vision": "real"}))
+
+    assert isinstance(adapters.vision, ClaudeCliReviewer)
+    assert adapters.vision.model == models.llm.heavy.primary.model
+    assert adapters.vision.provider == "claude_cli"  # subscription credit, not cash
+
+
+def test_the_review_is_refused_off_the_cli() -> None:
+    models = load_channel().models
+    api = type(models.llm.heavy.primary)(provider="anthropic_api", model="m")
+    heavy = models.llm.heavy.model_copy(update={"primary": api})
+    models = models.model_copy(update={"llm": models.llm.model_copy(update={"heavy": heavy})})
+
+    with pytest.raises(NotImplementedError, match="claude_cli only"):
+        build_adapters(models, mode=ALL_FAKE.model_copy(update={"vision": "real"}))
+
+
+def test_chaos_wraps_the_fake_review() -> None:
+    chaos = ChaosConfig(fail_rate=0.1, garbage_rate=0.1, seed=1)
+    adapters = build_adapters(load_channel().models, fake=True, chaos=chaos)
+
+    assert isinstance(adapters.vision, ChaosReviewer)
 
 
 def test_an_image_provider_without_an_adapter_is_refused() -> None:

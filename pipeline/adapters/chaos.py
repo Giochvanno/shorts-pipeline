@@ -17,6 +17,7 @@ from pipeline.adapters.errors import TransientAdapterError
 from pipeline.adapters.images import ImageClient, ImageRequest, ImageResult
 from pipeline.adapters.llm import LlmClient, LlmRequest, LlmResponse
 from pipeline.adapters.tts import TtsClient, TtsRequest, TtsResult
+from pipeline.adapters.vision import FrameCheckRequest, FrameReviewer, FrameVerdict
 
 Sleep = Callable[[float], None]
 
@@ -164,3 +165,25 @@ class ChaosImages(_Chaos):
                 licence=result.licence,
             )
         return result
+
+
+class ChaosReviewer(_Chaos):
+    """The review fails or stalls. Garbage cannot pass the port (an answer off the schema
+    is a transient error in the adapter), so a garbage roll fails the same way."""
+
+    def __init__(self, inner: FrameReviewer, config: ChaosConfig, sleep: Sleep) -> None:
+        super().__init__(config, salt=4, sleep=sleep)
+        self.inner = inner
+
+    @property
+    def provider(self) -> str:
+        return self.inner.provider
+
+    @property
+    def model(self) -> str:
+        return self.inner.model
+
+    def review(self, request: FrameCheckRequest) -> FrameVerdict:
+        if self.roll("vision") == "garbage":
+            raise TransientAdapterError("chaos: review answered off the schema")
+        return self.inner.review(request)
